@@ -1,23 +1,25 @@
-# Qynl Agent V12
+# Qynl Agent V13
 
-Qynl is a **Minecraft-only AI agent that closes the gameplay loop**: capture Minecraft, perceive the game, choose one bounded action, validate it, execute it, verify the result, track state transitions, and adapt when progress stalls.
+Qynl is a **Minecraft-only AI agent with temporal perception**. It captures Minecraft, understands the current scene, tracks what changed across frames, chooses one bounded action, validates it, executes it, and feeds the resulting state back into planning.
 
-## V12: adaptive state + strategy
+## V13: temporal world awareness
 
-V12 builds directly on V11. It does not replace the real Minecraft runtime. It adds a richer state representation and a strategy layer that helps the planner react to uncertainty, repeated states and repetitive actions.
+V13 builds directly on the V12 adaptive loop. The major improvement is that the agent no longer treats screenshots as isolated observations. It maintains a short-lived temporal state and gives the planner explicit state deltas, recent history, confidence, entities, UI, landmarks and hazards.
 
 ```text
 Minecraft
    ↓
+Screenshot
+   ↓
 Vision
    ↓
-GameState
+Temporal State Tracker
    ↓
-Goal + Strategy
+Current State + Delta + Recent States
    ↓
-Planner
+Goal + Planner Evidence
    ↓
-MinecraftAction
+ONE MinecraftAction
    ↓
 ActionPolicy
    ↓
@@ -25,120 +27,167 @@ Force ESC
    ↓
 Minecraft
    ↓
-new observation
+new screenshot
    ↓
-Transition + progress signal
+state transition
    ↓
-Memory
-   ↓
-Strategy update
-   ↓
-next action
+next decision
 ```
 
-## V12 improvements
+## V13 improvements
 
-- 🧠 **Normalized GameState** with summary, landmarks, hazards, UI and confidence
-- 🔄 **Transition tracking** between observations
-- 📈 **Visual novelty/progress heuristic**
-- 🎯 **Adaptive strategy controller**
-- 🤔 **Low-confidence cautious mode**
-- 🧭 **Repeated-state exploration mode**
-- 🔁 **Repeated-action variation mode**
-- 🧪 V12 state/strategy tests
-- 📚 Complete V12 documentation
+- 👁️ **Temporal perception** instead of isolated screenshots
+- 🧍 **Entity observations** with confidence and position hints
+- 🧠 **Short-term world-state history**
+- 🔎 **State delta detection** for entities, UI, landmarks and hazards
+- 📉 **Confidence tracking over time**
+- 🎯 **Temporal planner evidence**
+- 🔁 **Recent failure context** in planning
+- 🧪 V13 temporal perception tests
+- 📚 Complete V13 documentation
 
-## State tracking
+## Why temporal perception matters
 
-`minecraft/v12_state.py` converts the vision result into a normalized `GameState`.
-
-A transition contains:
+A single frame can be ambiguous. A sequence provides evidence about causality:
 
 ```text
-before state
-    ↓
-action
-    ↓
-after state
-    ↓
-changed?
-    ↓
-novelty score
+Frame 1 → tree ahead
+Frame 2 → tree closer
+Frame 3 → tree damaged
+Frame 4 → log disappeared
 ```
 
-The tracker keeps a bounded history, preventing a long Minecraft session from growing memory forever.
+Instead of merely asking "what is on screen?", V13 can give the planner information about **what changed**.
 
-The novelty score is a **heuristic**, not proof that a goal succeeded. For example, turning around changes the image but does not magically mean the house is built. Humanity remains trapped in the age of needing actual verification.
+This is particularly useful for:
 
-## Adaptive strategy
+- movement
+- breaking blocks
+- entities moving
+- inventory/UI changes
+- hazards appearing/disappearing
+- camera changes
+- verifying whether an action had an observable effect
 
-`minecraft/v12_strategy.py` gives the planner a mode based on current conditions.
+## State model
 
-### Cautious
+`minecraft/v13_state.py` provides:
 
-When confidence is below the configured threshold, the agent is told to re-observe and prefer short, reversible actions.
+- `EntityObservation`
+- `TemporalState`
+- `StateDelta`
+- `TemporalStateTracker`
 
-### Explore
+A `TemporalState` contains:
 
-When the same visual state repeats several times, the agent is encouraged to change camera or position rather than continuing the same loop.
+```text
+summary
+entities
+landmarks
+hazards
+visible UI
+confidence
+frame index
+```
 
-### Vary
+A `StateDelta` describes what changed since the previous observation.
 
-When the same action type repeats too often, the strategy asks for a different useful Minecraft action.
+The history is bounded so long-running sessions do not accumulate unlimited state in memory.
 
-### Normal
+## Planner
 
-When the state is not repeating and confidence is acceptable, the agent continues toward its current goal.
+`minecraft/v13_planner.py` builds `PlannerEvidence` containing:
 
-The strategy layer **does not execute anything**. It only changes planning context. The action parser, ActionPolicy, Force ESC and executor remain authoritative.
+- current state
+- state delta
+- recent states
+- recent failures
 
-## V11 → V12
+The planner is instructed to:
 
-V11 added:
+- use temporal evidence instead of guessing
+- choose one small action
+- prefer actions whose effects can be verified
+- be cautious when confidence is low
+- avoid repeating failed actions without evidence that the situation changed
 
-- action verification
-- episodic memory
-- stuck detection
-- recovery planning
+The model still outputs only a structured Minecraft action.
 
-V12 adds:
+## Integrated controller
 
-- richer state representation
-- explicit transition history
-- novelty/progress signal
-- confidence-aware strategy
-- action repetition avoidance
-- exploration behavior for repeated states
+`minecraft/v13_controller.py` connects the temporal tracker to the existing runtime:
+
+```text
+Vision
+  ↓
+TemporalStateTracker
+  ↓
+PlannerEvidence
+  ↓
+Model
+  ↓
+MinecraftAction
+  ↓
+Policy
+  ↓
+Force ESC
+  ↓
+Executor
+```
+
+It has a bounded step budget and records recent failures for subsequent planning decisions.
+
+## Action schema
+
+The model may only request:
+
+```json
+{"type":"key","key":"w","duration_ms":250}
+```
+
+```json
+{"type":"mouse_move","x":35,"y":-8}
+```
+
+```json
+{"type":"mouse_button","button":"left","duration_ms":80}
+```
+
+```json
+{"type":"wait","duration_ms":150}
+```
+
+Unknown or malformed actions are rejected before execution.
 
 ## Minecraft-only boundary
 
-The agent can reason about Minecraft screenshots, Minecraft visual observations, Minecraft goals, bounded Minecraft state/history and Minecraft actions.
+The model receives Minecraft-focused visual state, goals and bounded action history.
 
 It does not receive shell access, arbitrary desktop automation, process creation, unrestricted filesystem access, credentials, or generic computer-control tools.
 
 ## Safety chain
 
 ```text
-Model output
-    ↓
+Model
+  ↓
 Strict parser
-    ↓
+  ↓
 MinecraftAction
-    ↓
+  ↓
 ActionPolicy
-    ↓
+  ↓
 Force ESC
-    ↓
+  ↓
 Minecraft executor
 ```
 
-Force ESC cannot be disabled or cleared by the model.
+Force ESC remains independent of the model and cannot be disabled by it.
 
 ## Real gameplay
 
-V12 retains the V10/V11 real runtime path. Real input remains opt-in with `QYNL_DRY_RUN=0`.
+V13 retains the existing real-input runtime. Real input remains opt-in with `QYNL_DRY_RUN=0`.
 
-Start with dry-run and a dedicated Minecraft test world before enabling real input.
+Use a dedicated Minecraft test world and verify Force ESC before enabling real input.
 
 ## Project structure
 
@@ -158,31 +207,30 @@ AgentQynl/
 │   ├── v11_agent.py
 │   ├── v12_state.py
 │   ├── v12_strategy.py
+│   ├── v13_state.py
+│   ├── v13_planner.py
+│   ├── v13_controller.py
 │   ├── executor.py
 │   └── input_adapter.py
 ├── memory/
 ├── safety/
 ├── evals/
 └── docs/
-    └── V12.md
+    └── V13.md
 ```
 
 ## Tests
 
-V12 adds tests for:
+V13 adds tests covering:
 
-- state transition novelty
-- progress scoring
-- repeated-action variation
-- low-confidence cautious mode
+- temporal entity changes
+- planner evidence generation
 
-Run the project test suite before real-input testing.
+Run the complete test suite before real-input testing.
 
 ## Important limitation
 
-V12 improves the agent's control loop and state awareness. It does not claim that a vision model automatically understands every Minecraft scene or that visual novelty equals task success. Actual gameplay quality still depends on model quality, capture quality, latency, Minecraft version/UI and task complexity.
-
-The goal of V12 is to make those limitations manageable: observe more carefully, track what changed, avoid obvious loops, and give the planner better information for the next decision.
+V13 substantially improves temporal state awareness, but perception quality still depends on the selected vision model, capture quality, latency, Minecraft version/UI and task complexity. State change is evidence, not automatic proof that a goal was completed.
 
 ## License
 
