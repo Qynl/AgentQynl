@@ -1,4 +1,4 @@
-"""Structured Minecraft planner contract for V6.1."""
+"""V7 structured Minecraft planner using the canonical action schema."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -19,10 +19,7 @@ class PlannerLimits:
 
 
 class StructuredMinecraftPlanner:
-    """Converts provider JSON into one validated Minecraft action object.
-
-    Provider output is data only. It is never executed as code.
-    """
+    """Parse untrusted provider JSON into one MinecraftAction; never execute it."""
 
     def __init__(self, provider: Any, limits: PlannerLimits | None = None) -> None:
         self.provider = provider
@@ -30,15 +27,13 @@ class StructuredMinecraftPlanner:
 
     def plan(self, context: PlanningContext) -> MinecraftAction | None:
         raw = self.provider.plan(context)
-        if raw is None:
-            return None
         if isinstance(raw, MinecraftAction):
             return raw
         if not isinstance(raw, str) or len(raw) > self.limits.max_output_chars:
             return None
         try:
             payload = json.loads(raw)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
             return None
         if not isinstance(payload, dict):
             return None
@@ -47,24 +42,37 @@ class StructuredMinecraftPlanner:
     @staticmethod
     def _parse_action(payload: dict[str, Any]) -> MinecraftAction | None:
         action_type = payload.get("type")
-        if not isinstance(action_type, str):
-            return None
-        allowed = {"key_down", "key_up", "mouse_move", "mouse_button", "wait"}
-        if action_type not in allowed:
-            return None
-        try:
-            if action_type in {"key_down", "key_up"}:
-                key = payload["key"]
-                if not isinstance(key, str):
-                    return None
-                return MinecraftAction(type=action_type, key=key)
-            if action_type == "mouse_move":
-                return MinecraftAction(type=action_type, dx=float(payload["dx"]), dy=float(payload["dy"]))
-            if action_type == "mouse_button":
-                button = payload["button"]
-                if not isinstance(button, str):
-                    return None
-                return MinecraftAction(type=action_type, button=button)
-            return MinecraftAction(type="wait", duration=float(payload["duration"]))
-        except (KeyError, TypeError, ValueError):
-            return None
+        if action_type == "key":
+            key = payload.get("key")
+            if not isinstance(key, str):
+                return None
+            duration = _int(payload.get("duration_ms"))
+            if duration is None:
+                return None
+            return MinecraftAction(type="key", key=key.lower(), duration_ms=duration)
+        if action_type == "mouse_move":
+            x, y = _int(payload.get("x")), _int(payload.get("y"))
+            if x is None or y is None:
+                return None
+            return MinecraftAction(type="mouse_move", x=x, y=y)
+        if action_type == "mouse_button":
+            button = payload.get("button")
+            duration = _int(payload.get("duration_ms"))
+            if not isinstance(button, str) or duration is None:
+                return None
+            return MinecraftAction(type="mouse_button", button=button.lower(), duration_ms=duration)
+        if action_type == "wait":
+            duration = _int(payload.get("duration_ms"))
+            if duration is None:
+                return None
+            return MinecraftAction(type="wait", duration_ms=duration)
+        return None
+
+
+def _int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
