@@ -1,401 +1,433 @@
-# Qynl Agent V6
+# Qynl Agent V7
 
-Qynl is a **Minecraft-only AI agent** whose entire job is to play Minecraft: see the game, understand the current situation, pursue a Minecraft goal, act through a restricted Minecraft controller, remember useful experiences, and improve through evaluation.
+Qynl is a **Minecraft-only AI agent** built to actually play Minecraft rather than merely demonstrate computer-control plumbing.
+
+V7 focuses on the things that make an agent competent: focused perception, short-horizon action, frequent re-observation, state tracking, stuck detection, reusable micro-skills, strict structured outputs, and conservative recovery.
 
 It is **not** a general computer-use assistant. The model is never given arbitrary desktop, shell, process, filesystem, or unrestricted input control.
 
-> **Status: V6.** V6 adds the perception/goal/planning architecture needed to turn the V5 physical control path into a real Minecraft agent. Real autonomy remains opt-in and should be tested in a dedicated Minecraft environment.
+> **Status: V7.** V7 is the first version designed around a practical closed-loop gameplay controller. Real autonomy remains opt-in and should be validated in a dedicated Minecraft test world.
 
-## V6 highlights
+## V7 highlights
 
 - 🎮 Minecraft-only agent boundary
-- 👁️ Minecraft vision/perception contract
-- 🧠 Goal-conditioned planning context
-- 🔁 Observation → vision → goal → plan → safety → action loop
-- 🖱️ Restricted real Minecraft input
-- 📸 Opt-in MSS capture
-- 🧩 NVIDIA NIM, Ollama and OpenAI-compatible provider architecture
-- 🛡️ Deny-by-default ActionPolicy
-- 🚨 Independent operator Force ESC
-- 🧪 Dry-run executor
-- 📝 Bounded action audit
-- 🧠 Episodic learning foundation
+- 👁️ Focused visual perception
+- 🧠 Goal-conditioned planning
+- 🔄 Frequent observe → act → re-observe loop
+- 🧭 Rolling Minecraft state tracker
+- 🛑 Stuck-state detection
+- 🧩 Reusable Minecraft micro-skills
+- 🎯 Small, reversible actions instead of giant open-loop plans
+- 📋 Strict JSON action output
+- 🛡️ Canonical deny-by-default ActionPolicy
+- 🚨 Independent Force ESC
+- 🧪 Dry-run execution
+- 📝 Bounded audit and episodic memory foundations
 - 🖥️ TSX desktop control surface
 
-## The V6 architecture
+## Why V7 should play better
+
+A weak computer agent often does this:
 
 ```text
-                          ┌──────────────────────┐
-                          │      Minecraft       │
-                          └──────────┬───────────┘
-                                     │
-                              Screen Capture
-                                     ▼
-                          ┌──────────────────────┐
-                          │ MinecraftObservation │
-                          └──────────┬───────────┘
-                                     │
-                                     ▼
-                          ┌──────────────────────┐
-                          │   Vision Provider    │
-                          │ landmarks / hazards  │
-                          │ UI / confidence      │
-                          └──────────┬───────────┘
-                                     │
-                                     ▼
-┌──────────────┐          ┌──────────────────────┐
-│ NIM / Ollama │─────────▶│    Goal + Planner    │
-│ Compatible   │          │ Minecraft-only       │
-└──────────────┘          └──────────┬───────────┘
-                                     │
-                              MinecraftAction
-                                     │
-                                     ▼
-                          ┌──────────────────────┐
-                          │    ActionPolicy      │
-                          │    DENY BY DEFAULT   │
-                          └──────────┬───────────┘
-                                     │
-                               Force ESC
-                                     │
-                               rate / approval
-                                     │
-                                     ▼
-                          ┌──────────────────────┐
-                          │ Minecraft Executor   │
-                          └──────────┬───────────┘
-                                     │
-                                     ▼
-                                 Minecraft
-                                     │
-                                     └──────► next observation
+Screenshot → think for ages → execute 20 actions → hope
 ```
 
-The model proposes a **Minecraft action**, not a computer action. The executor is the final authority.
+V7 is designed to do this:
 
-## What changed from V5
+```text
+Screenshot
+   ↓
+Understand
+   ↓
+Choose ONE small action
+   ↓
+Execute
+   ↓
+Screenshot again
+   ↓
+Did the world change as expected?
+   ↓
+Update state
+   ↓
+Choose the next action
+```
 
-V5 gave Qynl the physical path to send restricted input. That alone does not make a competent Minecraft player. V6 adds the missing agent-level structure:
+This is much better suited to Minecraft because camera orientation, collisions, block breaking, menus, terrain, mobs, and inventory state can change after almost every action.
 
-### 1. Minecraft vision contract
+## V7 architecture
 
-`minecraft/vision.py` defines `MinecraftVisionProvider` and `VisualAnalysis`.
+```text
+                         ┌──────────────────────┐
+                         │      Minecraft       │
+                         └──────────┬───────────┘
+                                    │
+                              MSS Capture
+                                    ▼
+                         ┌──────────────────────┐
+                         │ MinecraftObservation │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │    Vision Model      │
+                         │ UI / landmarks /     │
+                         │ hazards / confidence │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │   State Tracker      │
+                         │ history / stuck      │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+┌──────────────┐         ┌──────────────────────┐
+│ NIM / Ollama │────────▶│ Goal + Planner       │
+│ Compatible   │         │ one next action      │
+└──────────────┘         └──────────┬───────────┘
+                                    │
+                              MinecraftAction
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │   ActionPolicy       │
+                         │   DENY BY DEFAULT    │
+                         └──────────┬───────────┘
+                                    │
+                               Force ESC
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ Minecraft Executor   │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                                 Minecraft
+```
 
-A vision provider can return:
+## V7 improvements
 
-- visual summary
-- visible Minecraft UI elements
+### 1. Correct action contract
+
+V7 uses the repository's actual `MinecraftAction` schema everywhere:
+
+```json
+{"type":"key","key":"w","duration_ms":250}
+```
+
+```json
+{"type":"mouse_move","x":35,"y":-8}
+```
+
+```json
+{"type":"mouse_button","button":"left","duration_ms":80}
+```
+
+```json
+{"type":"wait","duration_ms":150}
+```
+
+Provider output is treated as untrusted data and parsed into this schema. It is never executed as code.
+
+### 2. Short-horizon control
+
+The planner is explicitly instructed to select **one small next action** and then wait for another observation. This reduces catastrophic open-loop behavior.
+
+### 3. State tracking
+
+`minecraft/state.py` maintains a rolling history of:
+
+- frame IDs
+- visual summaries
 - landmarks
 - hazards
 - confidence
+- timing
 
-The default `NullVisionProvider` refuses to invent observations when no model is configured.
+It can detect repeated identical visual states, giving the controller a signal that it may be stuck.
 
-### 2. Goal manager
+### 4. Micro-skills
 
-`minecraft/goals.py` separates the Minecraft objective from the model's reasoning.
+`minecraft/skills.py` provides reusable primitives such as:
 
-A goal contains:
+- walking
+- looking
+- interacting
+- stopping
 
-- goal text
-- success conditions
-- maximum planning steps
+Higher-level Minecraft skills can compose these rather than inventing raw input sequences every time.
 
-The planner receives a `PlanningContext` containing the goal, visual analysis, recent Minecraft actions, and current step.
+### 5. Focused Minecraft prompt
 
-### 3. Real V6 agent loop
+`minecraft/prompts.py` tells the model exactly what it is: a Minecraft player. It explicitly rejects shell, filesystem, code, and generic computer actions and requires structured JSON output.
 
-`minecraft/loop_v6.py` connects the pieces:
-
-```text
-Capture
-  ↓
-Observation
-  ↓
-Vision
-  ↓
-Goal context
-  ↓
-Planner
-  ↓
-MinecraftAction
-  ↓
-ActionPolicy
-  ↓
-Force ESC
-  ↓
-Executor
-  ↓
-Result
-  ↓
-Next observation
-```
-
-Force ESC is checked before observation and again immediately before execution.
-
-## Minecraft-only permissions
-
-The model may receive Minecraft screenshots, Minecraft-focused visual analysis, Minecraft inventory/state, health/food information, the active Minecraft goal, bounded Minecraft action history, and bounded learning experiences.
-
-The model must not receive arbitrary desktop screenshots, arbitrary application control, shell execution, process creation, unrestricted filesystem access, unrestricted keyboard/mouse APIs, credentials, or secrets.
-
-The entire permission boundary is designed around **one application: Minecraft**.
-
-## V6 perception
-
-The capture layer remains explicitly scoped to the configured Minecraft surface. A future production capture adapter should identify the selected Minecraft window/region and reject ambiguous or unavailable targets.
-
-The vision layer is provider-independent. A vision result is treated as **advisory perception**, not as permission to act. The action policy remains authoritative.
-
-## V6 planning
-
-Qynl separates:
-
-**Goal:** What are we trying to accomplish in Minecraft?
-
-**Perception:** What appears to be happening in Minecraft right now?
-
-**Action:** What single bounded Minecraft action should happen next?
-
-This makes each stage independently testable instead of hiding everything inside one mysterious AI loop.
-
-## Actual gameplay path
-
-With the opt-in real adapters enabled:
+## Real gameplay loop
 
 ```text
-Minecraft window
-      ↓
-MSS capture
-      ↓
-Minecraft observation
-      ↓
-Vision model
-      ↓
-Goal-conditioned planner
-      ↓
-Structured MinecraftAction
-      ↓
-ActionPolicy
-      ↓
-Force ESC
-      ↓
-PyAutoGUI Minecraft adapter
-      ↓
-Minecraft
+1. Capture Minecraft
+2. Build observation
+3. Ask vision model what is visible
+4. Update rolling state
+5. Check for stuck/recovery conditions
+6. Add current goal + recent actions
+7. Ask planner for ONE next action
+8. Parse structured JSON
+9. Run ActionPolicy
+10. Check Force ESC
+11. Execute the action
+12. Observe again
+13. Evaluate whether the world changed as expected
+14. Repeat
 ```
 
-V6 is therefore much closer to an actual playing agent than V5. It still requires a properly connected vision/planning provider and task-specific evaluation before autonomous play should be trusted.
+The important part is step 12. Qynl does not assume that pressing a key means the intended thing happened.
 
-## Minecraft skills roadmap
+## Practical skill progression
 
-The agent should be evaluated incrementally rather than thrown into a fresh survival world and expected to discover civilization in one afternoon.
+V7 is designed to build competence from small verified skills.
 
-### Basic control
+### Movement
 
-- camera/look control
 - forward/back/strafe
 - jumping
 - sprinting
-- reliable stopping
+- camera control
+- stopping
+- recovering from collisions
 
-### Survival fundamentals
+### First survival loop
 
-- locate trees
-- break logs
-- collect drops
-- craft planks
-- craft crafting table
-- craft tools
-- locate stone
-- collect food
+```text
+Find tree
+ ↓
+Approach tree
+ ↓
+Look at trunk
+ ↓
+Hold attack briefly
+ ↓
+Observe block/dropped item change
+ ↓
+Repeat
+ ↓
+Open inventory
+ ↓
+Craft
+ ↓
+Verify result
+```
 
-### Exploration
+Every stage is observable and recoverable.
 
-- recognize terrain
-- navigate toward landmarks
-- avoid hazards
-- recover from getting stuck
-- maintain a useful position
+### Later skills
 
-### Mining
-
-- identify mineable blocks
-- choose safe routes
-- manage tool durability
-- collect ores
-- return toward a known location
-
-### Inventory/crafting
-
-- recognize inventory slots
-- move items safely
-- choose recipes
-- verify crafting results
-- avoid accidental item loss
-
-### Advanced
-
-- controlled combat
+- tool crafting
+- food gathering
+- navigation
+- mining
+- inventory management
 - caves
 - villages
+- controlled combat
 - Nether preparation
-- long-horizon objectives
-- multi-skill task composition
+- long-horizon survival
 
-## Learning system
+## Learning
 
-V6 keeps learning **structured and bounded**.
+V7 is designed around **experience retrieval and evaluation**, not uncontrolled self-modification.
 
-An experience can contain:
+A useful episode can contain:
 
 ```text
 Goal
 Observation
 Visual analysis
-Proposed action
-Validated action
-Outcome
+State before
+Action
+Policy decision
+Result
+State after
 Reward / feedback
 ```
 
-The system can later retrieve relevant experiences for similar Minecraft goals. Ordinary gameplay does **not** silently rewrite model weights. Learning experiments should be measurable and reversible.
+The agent can later use successful experiences as context for similar Minecraft situations.
+
+Model weights are not silently changed by normal gameplay.
+
+## Recovery behavior
+
+A competent player needs to recover, not just act.
+
+V7 provides the foundation for:
+
+- detecting repeated frames
+- abandoning a failed micro-plan
+- re-observing after unexpected results
+- using a safe wait/stop action
+- changing camera/movement strategy
+- returning to the current goal after recovery
+
+Future skill evaluators should score recovery separately from task success.
 
 ## Force ESC 🚨
 
-Force ESC is an independent operator emergency stop. The AI cannot trigger it, disable it, clear it, or override it.
+Force ESC remains completely independent from the model.
 
-The executor checks the escape latch immediately before sending input. The desktop app should expose a large emergency control and local keyboard shortcut. If Force ESC is engaged, real Minecraft input remains blocked until an explicit operator reset.
+The AI cannot trigger, disable, clear, or override it.
+
+The intended execution boundary is:
+
+```text
+Model
+ ↓
+Structured Action
+ ↓
+ActionPolicy
+ ↓
+Force ESC
+ ↓
+Minecraft Executor
+```
+
+If Force ESC is engaged, real Minecraft input stays blocked until an explicit operator reset.
+
+## Provider architecture
+
+V7 remains provider-neutral:
+
+- **NVIDIA NIM**
+- **Ollama**
+- **OpenAI-compatible vision/planning APIs**
+
+Providers should only implement perception/planning interfaces. They never receive arbitrary computer APIs.
 
 ## Desktop app
 
-The TSX desktop app is the control center for the Minecraft agent:
+The TSX desktop app is intended to expose the entire Minecraft agent clearly:
 
-- **Dashboard:** goal, state, current step, confidence
-- **Minecraft:** capture preview and connection
-- **Vision:** visual analysis and confidence
-- **Planner:** current plan and proposed action
-- **Actions:** action queue and validation results
-- **Memory:** experiences and retrieval
-- **Learning:** rewards and evaluations
-- **Providers:** NIM/Ollama/compatible configuration
-- **Safety:** Safe Mode, approvals, limits and Force ESC
-- **Settings:** Minecraft-specific configuration
+- **Dashboard**: goal, state, confidence, current action
+- **Minecraft**: capture preview
+- **Vision**: current analysis
+- **State**: landmarks, hazards, history, stuck detector
+- **Planner**: current context and proposed action
+- **Actions**: validation and execution history
+- **Skills**: reusable Minecraft skills
+- **Memory**: experiences
+- **Learning**: rewards/evaluations
+- **Providers**: model configuration
+- **Safety**: limits, approvals and Force ESC
 
-The UI is not the security boundary. Python core/safety code validates actions independently.
+The UI is not the security boundary. Core Python safety code remains authoritative.
 
-## Safety model
+## Safety
 
-Every real action must pass:
+Every action passes through:
 
 ```text
-Model proposal
-     ↓
-Structured action parser
-     ↓
-Minecraft-only ActionPolicy
-     ↓
-Rate / duration limits
-     ↓
+Untrusted model output
+        ↓
+Strict JSON parser
+        ↓
+MinecraftAction
+        ↓
+Deny-by-default ActionPolicy
+        ↓
+Rate/duration limits
+        ↓
 Force ESC checkpoint
-     ↓
-Optional operator approval
-     ↓
+        ↓
 Minecraft executor
 ```
 
-Unknown actions are rejected. The model cannot provide executable code or arbitrary input commands.
+No arbitrary shell commands, executable model output, unrestricted filesystem operations, or general desktop control are exposed.
 
-## Providers
-
-Qynl is provider-agnostic at the planning/vision layer:
-
-- **NVIDIA NIM**
-- **Ollama** for local models
-- **OpenAI-compatible APIs**
-
-A provider outputs structured Minecraft reasoning/actions. It never receives generic computer-control APIs. Credentials remain outside Git.
+For real autonomous testing, use a dedicated Minecraft instance/world and verify Force ESC before enabling real input.
 
 ## Project structure
 
 ```text
 AgentQynl/
-├── apps/
-│   └── desktop/          # TSX desktop UI
-├── core/                 # settings, audit, agent abstractions
+├── apps/desktop/         # TSX desktop UI
+├── core/                 # agent/settings/audit foundations
 ├── minecraft/
-│   ├── capture.py        # capture protocol
-│   ├── real_capture.py   # opt-in MSS capture
-│   ├── observation.py    # Minecraft observation
-│   ├── vision.py         # V6 vision contract
-│   ├── goals.py          # goal/context management
-│   ├── executor.py       # safe executors
-│   ├── input_adapter.py  # restricted Minecraft input
-│   ├── run_v5.py         # V5 loop
-│   └── loop_v6.py        # V6 agent loop
-├── memory/               # episodic learning
-├── safety/               # ActionPolicy + Force ESC
-├── evals/                # evaluation and safety tests
+│   ├── capture.py
+│   ├── real_capture.py
+│   ├── observation.py
+│   ├── vision.py
+│   ├── providers.py
+│   ├── prompts.py
+│   ├── planner.py
+│   ├── goals.py
+│   ├── state.py          # V7 rolling state tracker
+│   ├── skills.py         # V7 Minecraft micro-skills
+│   ├── executor.py
+│   ├── input_adapter.py
+│   └── loop_v6.py
+├── memory/
+├── safety/
+├── evals/
 └── docs/
-    └── V6.md             # V6 architecture
 ```
 
 ## Roadmap
 
-### V6.0 agent architecture
+### V7.0 closed-loop gameplay
 
 - [x] Minecraft-only scope
 - [x] Real opt-in capture
-- [x] Restricted real input
-- [x] Vision provider contract
+- [x] Restricted Minecraft input
+- [x] Vision contract
 - [x] Goal manager
-- [x] Goal-conditioned planning context
-- [x] Observe → perceive → plan → validate → act loop
-- [x] Force ESC integration
-- [x] Dry-run executor
-- [x] V6 documentation
+- [x] Structured planner
+- [x] Canonical action schema
+- [x] Rolling state tracker
+- [x] Stuck detection foundation
+- [x] Minecraft micro-skills
+- [x] Focused Minecraft prompts
+- [x] Force ESC
 
-### V6.1 model integration
+### V7.1 actual model adapters
 
 - [ ] NVIDIA NIM vision adapter
 - [ ] Ollama vision adapter
 - [ ] OpenAI-compatible vision adapter
-- [ ] Structured planner output parser
-- [ ] Automatic model confidence handling
-- [ ] Model failure/retry policy
+- [ ] Structured planner transport
+- [ ] Confidence-aware action gating
+- [ ] Automatic retry/recovery
 
-### V6.2 Minecraft skills
+### V7.2 competence
 
-- [ ] Camera control
-- [ ] Navigation
-- [ ] Wood gathering
-- [ ] Crafting
-- [ ] Food gathering
-- [ ] Mining
-- [ ] Inventory management
-- [ ] Controlled combat
+- [ ] Reliable camera calibration
+- [ ] Movement benchmark
+- [ ] Wood gathering benchmark
+- [ ] Crafting benchmark
+- [ ] Food benchmark
+- [ ] Navigation benchmark
+- [ ] Mining benchmark
+- [ ] Inventory benchmark
 
-### V6.3 learning
+### V7.3 learning
 
 - [ ] Goal-conditioned experience retrieval
 - [ ] Skill memory
-- [ ] Reward/evaluation system
-- [ ] Failure recovery
+- [ ] Outcome scoring
+- [ ] Recovery training/evaluation
 - [ ] Replayable benchmark worlds
 
-### V7
+### V8
 
-- [ ] Long-horizon survival agent
-- [ ] Persistent world knowledge
+- [ ] Long-horizon survival
+- [ ] Persistent world model
 - [ ] Multi-skill planning
-- [ ] Stronger world-state estimation
-- [ ] Autonomous Minecraft benchmark suite
+- [ ] Stronger Minecraft state estimation
+- [ ] Autonomous benchmark suite
 
 ## Development
 
-Real computer input is opt-in. Start with dry-run mode and a test world, verify Force ESC, verify the capture region, then enable one skill at a time.
+Start in dry-run mode. Verify the Minecraft capture region, verify the action policy, test Force ESC, then enable real input in a dedicated test world.
 
-The repository does not claim that a model is automatically good at Minecraft merely because the control loop exists. V6 builds the architecture needed to make competence measurable and trainable.
+V7 is designed to make actual gameplay competence possible. It does not pretend that adding an LLM magically teaches Minecraft. Competence comes from good perception, short feedback loops, reliable actions, skills, recovery, and measurable evaluation.
 
 ## License
 
