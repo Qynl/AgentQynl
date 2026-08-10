@@ -1,240 +1,169 @@
 # Qynl Agent
 
-Qynl is a **Minecraft-only AI agent**. The project is designed around one job: let an AI observe a Minecraft game, reason about Minecraft goals, perform tightly bounded Minecraft inputs, remember useful experiences, and improve through evaluation.
+Qynl is a **Minecraft-only AI agent**. Its job is simple: see Minecraft, understand Minecraft, play Minecraft, remember useful experiences, and improve through evaluation.
 
-It is **not** a general computer-use assistant. The model should not receive arbitrary desktop, shell, process, or filesystem control.
+It is **not** a general computer-use assistant. The agent is intentionally restricted to a configured Minecraft capture surface and a bounded Minecraft action interface.
 
-> **Status:** V4 foundation in development. The real screen-capture and input adapters remain opt-in and are not enabled by the repository's safe defaults.
+> **Status: V5.** V5 adds the first real capture, input, and gameplay-loop components. Real computer input remains explicitly opt-in and should be tested in an isolated Minecraft environment.
 
-## V4 highlights
+## V5 highlights
 
-- 🖥️ TSX desktop control surface
-- 🎮 Minecraft-only agent scope
-- 👁️ Minecraft observation/capture boundary
+- 🎮 Minecraft-only scope
+- 👁️ Real opt-in Minecraft screen capture through MSS
 - 🧠 Provider abstraction for NVIDIA NIM, Ollama and OpenAI-compatible endpoints
-- 🎯 Structured Minecraft action policy
-- 🛡️ Deny-by-default safety validation
+- 🎯 Structured Minecraft observations and actions
+- 🖱️ Restricted real keyboard/mouse Minecraft adapter
+- 🔁 Real observe → plan → validate → act loop
+- 🛡️ Deny-by-default ActionPolicy
 - 🚨 Operator-only Force ESC hard stop
-- 🧪 Dry-run Minecraft executor for safe testing
+- 🧪 Dry-run executor for safe testing
 - 📝 Bounded Minecraft action audit log
-- ⚙️ Typed Minecraft agent settings
 - 🧠 Bounded episodic learning foundation
-- 🔒 No model-controlled shell, process launching or unrestricted filesystem access
+- 🖥️ TSX desktop control surface
 
-## V4 architecture
+## What V5 can actually do
+
+V5 now contains the physical integration path required to let a planner interact with Minecraft:
 
 ```text
-                         ┌──────────────────────┐
-                         │      Minecraft       │
-                         └──────────┬───────────┘
-                                    │
-                           Minecraft Capture
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │    Observation       │
-                         │ frame + game state   │
-                         └──────────┬───────────┘
-                                    │
-                                    ▼
-┌─────────────────┐       ┌──────────────────────┐       ┌─────────────────┐
-│ NVIDIA NIM      │──────▶│     Qynl Brain       │◀─────▶│ Memory /        │
-│ Ollama          │       │ observe → plan → act │       │ Learning        │
-│ Compatible API  │       └──────────┬───────────┘       └─────────────────┘
-└─────────────────┘                  │
-                              MinecraftAction
-                                     │
-                                     ▼
-                           ┌──────────────────────┐
-                           │     ActionPolicy     │
-                           │     DENY BY DEFAULT  │
-                           └──────────┬───────────┘
-                                      │
-                              Force ESC checkpoint
-                                      │
-                              approval / rate limit
-                                      │
-                                      ▼
-                           ┌──────────────────────┐
-                           │ Minecraft Executor   │
-                           └──────────┬───────────┘
-                                      │
-                                      ▼
-                                  Minecraft
+Minecraft
+   ↓
+MSS capture of configured Minecraft region
+   ↓
+MinecraftObservation
+   ↓
+Vision / reasoning planner
+   ↓
+MinecraftAction
+   ↓
+ActionPolicy
+   ↓
+Force ESC checkpoint
+   ↓
+Restricted input adapter
+   ↓
+Minecraft
 ```
 
-Every model-proposed action goes through the safety boundary before it can reach an input adapter.
+The loop in `minecraft/run_v5.py` performs one bounded action per observation. This is intentionally slower and easier to debug than immediately unleashing a high-frequency autonomous loop upon the unsuspecting block world.
 
-## Minecraft-only scope
+## Minecraft-only boundary
 
-Qynl is intentionally restricted to Minecraft context.
-
-The model may eventually receive:
+Qynl may eventually receive:
 
 - Minecraft screenshots
 - Minecraft-focused structured state
 - inventory information
-- health/food information
-- the current Minecraft goal
+- health and food
+- current Minecraft goal
 - bounded action history
 - bounded learning experiences
 
-The model should **not** receive or control:
+Qynl must not receive or control:
 
 - arbitrary desktop windows
 - arbitrary applications
 - shell commands
 - process creation
 - unrestricted filesystem operations
-- arbitrary mouse/keyboard APIs
+- arbitrary keyboard APIs
+- arbitrary mouse APIs
 - credentials or secrets
 
-The distinction matters. A Minecraft agent should play Minecraft, not accidentally become a general-purpose remote-control daemon because someone forgot to put a permission check in a Friday-night commit.
+The real input adapter accepts only the structured Minecraft actions produced by the safety layer.
 
-## V4 Minecraft observation layer
+## V5 capture
 
-`minecraft/observation.py` defines the model-facing observation contract.
+`minecraft/real_capture.py` provides an optional MSS adapter.
 
-`minecraft/capture.py` defines the capture boundary. The default `DisabledCapture` produces no screenshot and does not inspect the desktop.
+The operator configures an explicit capture rectangle. The adapter captures that region only and returns a Minecraft capture frame.
 
-A real capture adapter should be responsible for selecting **only the configured Minecraft surface** and returning an opaque screenshot reference. It should not expose arbitrary desktop content to the agent.
+Screenshot persistence is optional. If persistence is disabled, the capture layer does not write screenshots to disk.
 
-## V4 executor
+The safe `DisabledCapture` remains available and does not inspect the desktop.
 
-`minecraft/executor.py` contains two deliberately separate paths:
+## V5 real input
 
-### DryRunExecutor
+`minecraft/input_adapter.py` provides a restricted PyAutoGUI adapter.
 
-The default testing boundary. It validates actions but never sends OS input.
+It supports only the action types represented by the existing `MinecraftAction` contract. It does not accept arbitrary shell commands, application names, arbitrary scripts, or model-generated key names outside the policy.
 
-Use this for:
+PyAutoGUI's own failsafe remains enabled.
 
-- UI development
-- policy testing
-- agent evaluation
-- debugging model outputs
-
-### SafeMinecraftExecutor
-
-The real-input boundary. It requires an explicitly supplied Minecraft input adapter and performs:
+Every real input passes through:
 
 ```text
-ActionPolicy validation
-        ↓
-Force ESC checkpoint
-        ↓
-Minecraft input adapter
+MinecraftAction
+      ↓
+ActionPolicy
+      ↓
+Force ESC
+      ↓
+MinecraftInput
 ```
 
-The model never calls the input adapter directly.
+## Gameplay loop
 
-## Action safety
+`minecraft/run_v5.py` connects the capture and executor layers:
 
-V3's deny-by-default `ActionPolicy` remains the core safety boundary.
+```text
+1. Capture Minecraft
+2. Create MinecraftObservation
+3. Ask the planner for one MinecraftAction
+4. Validate the action
+5. Check Force ESC
+6. Send the restricted input
+7. Capture the next observation
+8. Repeat
+```
 
-Current supported action categories are deliberately small:
+The planner is model-agnostic. NVIDIA NIM, Ollama, and compatible providers can be connected through the provider abstraction.
 
-- allowlisted Minecraft keys
-- bounded key holds
-- bounded mouse movement
-- left/right mouse buttons
-- bounded waits
-
-Unknown actions are rejected.
-
-The policy does not expose arbitrary key codes, shell commands, process launching, or filesystem operations.
+V5 does **not** claim that an arbitrary vision model is already a competent Minecraft player. The physical control loop exists; a strong Minecraft planner and robust visual/state understanding still need to be integrated and evaluated.
 
 ## Force ESC 🚨
 
-Force ESC is an **operator-only emergency stop** and is intentionally outside the model tool system.
+Force ESC is an **operator-only emergency stop**.
 
 The model cannot:
 
-- trigger Force ESC
-- disable Force ESC
-- clear Force ESC
-- override Force ESC
+- trigger it
+- clear it
+- disable it
+- override it
 
-The real executor checks the emergency latch immediately before sending input. If it is engaged, no Minecraft input is sent.
+The real input adapter checks it before and after input. The gameplay loop also checks it before planning/execution.
 
-The desktop application should bind Force ESC to a local operator shortcut and keep it available even when the agent is busy or unresponsive.
+The desktop application should bind Force ESC to a local operator shortcut and keep the control available even if the agent is confused or stuck.
 
-## Audit log
+## Safety
 
-`core/audit.py` provides a bounded in-memory audit log for Minecraft actions.
+Qynl uses a layered safety model:
 
-Records contain only:
+1. **Minecraft scope** limits what the agent is intended to observe.
+2. **Structured actions** prevent free-form model commands from reaching input.
+3. **ActionPolicy** denies unknown or excessive actions.
+4. **Force ESC** provides an independent operator hard stop.
+5. **Executor** is the only layer allowed to send Minecraft input.
+6. **Dry-run mode** allows testing without real input.
 
-- timestamp
-- pipeline stage
-- Minecraft action type
-- allow/deny result
-- validation reason
-
-The audit layer does not store screenshots, API keys, arbitrary desktop data, or model secrets.
-
-## Settings
-
-`core/settings.py` provides typed configuration for the Minecraft agent:
-
-- provider
-- model
-- endpoint
-- safe mode
-- approval requirement
-- capture rate
-- action rate limit
-- screenshot persistence preference
-
-Safe defaults are intentionally conservative.
+Use a dedicated Minecraft instance or isolated environment for real-input testing. Do not run experimental computer-control software against a machine containing sensitive applications or data.
 
 ## Providers
 
-Qynl is provider-agnostic at the agent layer.
-
-Supported/planned providers:
+Qynl is provider-agnostic:
 
 - **NVIDIA NIM**
 - **Ollama** for local models
 - **OpenAI-compatible APIs**
 
-Provider output must be converted into the structured Minecraft action interface before it can reach the safety layer.
+The provider generates reasoning/structured output. It does not receive direct OS-control APIs.
 
-Credentials must stay outside Git. Never commit `.env` files, API keys, access tokens, or private data.
-
-## Minecraft loop
-
-```text
-Capture Minecraft
-      ↓
-Create observation
-      ↓
-Vision / reasoning model
-      ↓
-Propose MinecraftAction
-      ↓
-ActionPolicy
-      ↓
-Force ESC checkpoint
-      ↓
-Approval / rate limits
-      ↓
-Minecraft Executor
-      ↓
-Observe result
-      ↓
-Evaluate
-      ↓
-Bounded memory
-      ↓
-Next step
-```
-
-The system is designed so that a model failure produces a rejected/failed Minecraft action rather than unrestricted computer control.
+Credentials must stay outside Git. Never commit `.env`, API keys, access tokens, or private screenshots.
 
 ## Learning
 
-Qynl uses bounded episodic memory rather than silently modifying model weights during gameplay.
+Qynl uses bounded episodic memory rather than silently changing model weights during gameplay.
 
 An experience can contain:
 
@@ -247,22 +176,22 @@ Outcome
 Reward / feedback
 ```
 
-This makes learning experiments inspectable and testable. Later versions can add skill retrieval, reward models, offline training or fine-tuning without weakening the action boundary.
+Future versions can add goal-conditioned retrieval, skill memory, reward models, offline training, or fine-tuning without weakening the Minecraft action boundary.
 
 ## Desktop application
 
-The desktop UI is built around TSX and is intended to expose the Minecraft agent clearly:
+The desktop UI is built around TSX and is intended to make the Minecraft agent understandable:
 
-- **Dashboard**: current goal, status and activity
+- **Dashboard**: current goal and agent status
 - **Minecraft**: capture preview and connection state
-- **Actions**: proposed/approved/rejected Minecraft actions
-- **Memory**: bounded experiences
-- **Learning**: feedback and evaluations
+- **Actions**: proposed/approved/rejected actions
+- **Memory**: experiences
+- **Learning**: feedback and evaluation
 - **Providers**: NIM/Ollama/compatible configuration
-- **Safety**: Safe Mode, approvals, limits and Force ESC
+- **Safety**: Safe Mode, limits, approvals and Force ESC
 - **Settings**: Minecraft agent configuration
 
-The UI is not itself an authority. The Python safety/core layers remain responsible for validating actions.
+The UI is not the safety authority. The core Python layers validate actions independently.
 
 ## Project structure
 
@@ -270,66 +199,74 @@ The UI is not itself an authority. The Python safety/core layers remain responsi
 AgentQynl/
 ├── apps/
 │   └── desktop/          # TSX desktop UI
-├── core/                 # Agent settings, audit and core abstractions
-├── minecraft/            # Minecraft-only capture, observation and execution
+├── core/                 # Agent settings, audit and abstractions
+├── minecraft/
+│   ├── capture.py        # Capture protocol + safe disabled capture
+│   ├── observation.py    # Minecraft observation contract
+│   ├── real_capture.py   # Opt-in MSS capture
+│   ├── executor.py       # Dry-run + safe executor
+│   ├── input_adapter.py  # Restricted real Minecraft input
+│   └── run_v5.py         # Observe → act loop
 ├── memory/               # Bounded episodic learning
 ├── safety/               # ActionPolicy + Force ESC
-├── evals/                # Safety and agent evaluation
+├── evals/                # Evaluation and safety tests
 └── docs/                 # Versioned architecture notes
 ```
 
-## V4 roadmap
+## Roadmap
 
-### V4.0 foundation
+### V5.0 real control
 
 - [x] Minecraft-only scope
 - [x] Structured observation contract
-- [x] Capture boundary with safe disabled default
+- [x] Opt-in MSS capture adapter
+- [x] Restricted PyAutoGUI Minecraft adapter
+- [x] Real observe/act loop
 - [x] Dry-run executor
-- [x] Safe real-input executor boundary
 - [x] Deny-by-default ActionPolicy
 - [x] Force ESC foundation
 - [x] Bounded action audit log
-- [x] Typed agent settings
-- [x] V4 safety regression tests
+- [x] V5 documentation
 
-### V4.1 perception
+### V5.1 vision
 
-- [ ] Real Minecraft window/surface capture adapter
-- [ ] Vision provider adapter
-- [ ] Minecraft-focused visual observation schema
-- [ ] Inventory/state extraction
-- [ ] Frame-rate controls
+- [ ] Vision provider integration
+- [ ] Screenshot encoding for selected models
+- [ ] Minecraft UI/state recognition
+- [ ] Inventory recognition
+- [ ] Cross-frame visual memory
 
-### V4.2 gameplay
+### V5.2 actual Minecraft skills
 
-- [ ] Minecraft-only keyboard adapter
-- [ ] Minecraft-only mouse adapter
-- [ ] Desktop Force ESC shortcut
-- [ ] Action queue and approval UI
-- [ ] Action replay/evaluation tools
-- [ ] Basic movement/navigation tasks
+- [ ] Camera/look control
+- [ ] Walking and navigation
+- [ ] Mining
+- [ ] Item pickup
+- [ ] Inventory management
+- [ ] Crafting
+- [ ] Food/health management
+- [ ] Basic combat in controlled tests
 
-### V4.3 learning
+### V5.3 learning
 
-- [ ] Experience retrieval
-- [ ] Goal-conditioned memory
-- [ ] Reward/feedback UI
-- [ ] Offline evaluation scenarios
-- [ ] Skill/task abstraction
+- [ ] Goal-conditioned memory retrieval
+- [ ] Skill memory
+- [ ] Reward/evaluation loop
+- [ ] Failure recovery
+- [ ] Replayable test scenarios
 
-### V4.4 autonomous Minecraft
+### V6
 
 - [ ] Long-horizon Minecraft planning
-- [ ] World-state tracking
-- [ ] Recovery from failed actions
+- [ ] Better world-state tracking
+- [ ] Multi-step skill execution
 - [ ] Optional autonomous mode in a dedicated Minecraft test instance
 
-## Safety and testing
+## Development
 
-Do not test real computer-control adapters on a machine containing sensitive applications or data. Prefer a dedicated Minecraft instance, separate OS account, VM or other isolated environment where practical.
+The repository defaults to safe behavior. Real input is opt-in and should only be enabled deliberately after the Minecraft capture region and safety controls have been verified.
 
-The V4 repository defaults to dry-run behavior. A roadmap checkbox does not mean a feature is already implemented.
+A roadmap checkbox means the feature exists in the repository, not that an AI model is magically good at Minecraft yet. We still have to teach the silicon creature where the crafting table is.
 
 ## License
 
