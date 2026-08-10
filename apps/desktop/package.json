@@ -1,0 +1,21 @@
+{
+  "name": "qynl-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "electron/main.ts",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "electron": "electron ."
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "electron": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "typescript": "latest"
+  }
+}
