@@ -1,106 +1,114 @@
-# Qynl Agent V10
+# Qynl Agent V11
 
-Qynl is a **Minecraft-only AI agent that can actually close the loop**: capture Minecraft, send the game image to a vision-capable model, choose one bounded Minecraft action, validate it, execute it, and observe Minecraft again.
+Qynl is a **Minecraft-only AI agent that closes the gameplay loop**: capture Minecraft, perceive the game, choose one bounded action, validate it, execute it, verify the result, remember the outcome, and recover when progress stalls.
 
-V10 is deliberately not a general computer-use agent. The model receives Minecraft context and can only produce the canonical Minecraft action schema.
-
-## V10: the full loop
+## V11: adaptive closed-loop gameplay
 
 ```text
 Minecraft
    ↓
 MSS capture
    ↓
-MinecraftObservation
+Vision model
    ↓
-Vision-capable model
-   ↓
-VisualAnalysis
-   ↓
-Goal + context
+State signature + goal context
    ↓
 Planner
    ↓
-Strict MinecraftAction JSON
+MinecraftAction
    ↓
 ActionPolicy
    ↓
 Force ESC
    ↓
-PyAutoGUI Minecraft adapter
-   ↓
-Minecraft
+Minecraft executor
    ↓
 new screenshot
+   ↓
+result verification
+   ↓
+episode memory
+   ↓
+normal planning OR recovery
 ```
 
-This is the important change from the earlier versions: the model transport, image input, structured planning, policy and real executor are wired together in `minecraft/run_v10.py`.
+V11 is an improvement release, not a new permission model. It keeps the V10 Minecraft-only boundary and makes the agent less likely to blindly repeat bad actions.
 
-## What V10 actually does
+## V11 improvements
 
-- 📸 Captures a configured Minecraft region with MSS
-- 👁️ Sends the frame to a multimodal vision model
-- 🧠 Gives the model the active Minecraft goal and current visual analysis
-- 🎯 Requests exactly one next Minecraft action
-- 📋 Parses the result into the repository's canonical `MinecraftAction`
-- 🛡️ Validates it with deny-by-default `ActionPolicy`
-- 🚨 Checks independent Force ESC immediately before input
-- 🎮 Sends the action through the restricted Minecraft PyAutoGUI adapter
-- 🔄 Captures the next frame and repeats
-- 🧪 Defaults to dry-run so the complete perception/planning path can be tested without input
+- 🔁 **Closed-loop action verification**: every executed action is followed by another visual observation
+- 🧠 **Episode memory**: stores bounded before/action/after/outcome records
+- 🛑 **Stuck detection**: detects repeated visual states
+- 🔧 **Recovery planning**: switches to a recovery strategy after repeated non-progress
+- 🚫 **No blind retries**: recovery receives recent failure reasons
+- 📋 **Canonical action parser**: one strict parser for model output
+- 🛡️ **Policy re-validation** immediately before execution
+- 🚨 **Force ESC** remains independent of the model
+- 🧪 **V11 tests** for parser safety and stuck detection
 
-## Supported provider architecture
+## What V11 fixes conceptually
 
-V10 uses an OpenAI-compatible multimodal HTTP transport, so the same agent can connect to:
+V10 already had the real path from screenshot to model to Minecraft input. The weak point was that an executed action was not meaningfully evaluated before the next decision.
 
-- **NVIDIA NIM**
-- **Ollama** with a vision-capable model
-- other OpenAI-compatible multimodal endpoints
-
-No provider receives shell access, arbitrary desktop tools, or unrestricted keyboard/mouse APIs.
-
-## Quick start
-
-Install the Python dependencies from `requirements.txt`, configure the model and capture region, then run the agent in dry-run mode first:
+V11 changes that:
 
 ```text
-QYNL_PROVIDER=ollama
-QYNL_BASE_URL=http://127.0.0.1:11434/v1
-QYNL_MODEL=<your-vision-model>
-QYNL_CAPTURE_LEFT=0
-QYNL_CAPTURE_TOP=0
-QYNL_CAPTURE_WIDTH=1280
-QYNL_CAPTURE_HEIGHT=720
-QYNL_DRY_RUN=1
-QYNL_ONCE=1
-python -m minecraft.run_v10
+Action: press W for 250 ms
+        ↓
+Minecraft changes?
+        ↓
+YES → remember successful transition
+NO  → remember failure
+        ↓
+Repeated failures?
+        ↓
+YES → recovery mode
+NO  → normal planning
 ```
 
-For NIM:
+This matters because Minecraft is stateful. A good agent cannot assume that an action worked just because the input API reported that it was sent.
+
+## Memory
+
+`minecraft/v11_agent.py` provides a bounded `V11Memory` containing episodes:
 
 ```text
-QYNL_PROVIDER=nim
-NVIDIA_API_KEY=<your-key>
-QYNL_BASE_URL=<your-NIM-compatible-base-url>
-QYNL_MODEL=<your-vision-capable-model>
+before visual state
+      ↓
+action
+      ↓
+after visual state
+      ↓
+success / failure
+      ↓
+reason
 ```
 
-The NIM URL/model are configurable because deployments and available models can change. Do not put keys into Git.
+Memory is intentionally bounded so an endless Minecraft session does not create an endless in-memory history.
 
-## Real Minecraft input
+The memory currently improves **context and recovery**. It does not silently train or rewrite model weights.
 
-After verifying the capture and model output in dry-run mode, real input can be enabled:
+## Stuck detection
 
-```text
-QYNL_DRY_RUN=0
-python -m minecraft.run_v10
-```
+`StuckDetector` tracks recent visual signatures. If several recent observations collapse into the same small set of states, V11 enters recovery mode.
 
-Use a dedicated Minecraft test world/account. Human beings have spent decades learning that testing autonomous software on the important thing first is a bad idea.
+Recovery is not allowed to bypass the normal safety pipeline. Recovery still produces one ordinary `MinecraftAction`, which must pass `ActionPolicy` and Force ESC.
+
+## Recovery behavior
+
+Recovery prompts tell the model:
+
+- the agent is stuck
+- what recent failures occurred
+- choose one small reversible action
+- do not repeat a failed action unless the visible situation changed
+- output only the canonical Minecraft action JSON
+
+This prevents the classic autonomous-agent strategy of pressing W repeatedly for several minutes while confidently accomplishing absolutely nothing.
 
 ## Canonical action schema
 
-The model may return only one action per cycle:
+The model can request only:
 
 ```json
 {"type":"key","key":"w","duration_ms":250}
@@ -118,140 +126,78 @@ The model may return only one action per cycle:
 {"type":"wait","duration_ms":150}
 ```
 
-The parser rejects unknown action types and malformed fields. The policy then independently checks allowlisted keys, mouse bounds and duration limits.
-
-## Why V10 should work substantially better
-
-The old architecture stopped at interfaces. V10 actually connects the important components.
-
-### Closed-loop perception
-
-The model sees a new Minecraft frame after each action cycle. It does not blindly execute a long script based on an old screenshot.
-
-### One-action planning
-
-The model chooses one bounded action, then gets another observation. This is much more robust for Minecraft because movement, camera orientation, collisions, block breaking, menus and mobs change the state constantly.
-
-### Real multimodal input
-
-The vision provider receives the actual captured Minecraft image, not a placeholder screenshot reference or a text-only description.
-
-### Canonical action contract
-
-Vision/planning output is converted into the same `MinecraftAction` object understood by the policy and executor. The previous V6/V7 schema mismatch is removed.
-
-### Safety remains outside the model
-
-The model can request an action. It cannot authorize itself to execute it.
+Unknown types, malformed JSON and malformed fields are rejected.
 
 ## Minecraft-only boundary
 
-The model is allowed to reason about:
+The model can reason about Minecraft screenshots, Minecraft visual observations, Minecraft goals, bounded Minecraft state/history and Minecraft actions.
 
-- Minecraft screenshots
-- Minecraft visual observations
-- Minecraft goals
-- Minecraft inventory/state when available
-- bounded Minecraft action history
+It does not receive shell access, arbitrary desktop automation, process creation, unrestricted filesystem access, credentials, or generic computer-control tools.
 
-It is not given:
+## Safety chain
 
-- arbitrary desktop screenshots
-- shell execution
-- process creation
-- filesystem commands
-- credentials/secrets
-- unrestricted keyboard APIs
-- unrestricted mouse APIs
-- arbitrary application control
+```text
+Model output
+    ↓
+Strict parser
+    ↓
+MinecraftAction
+    ↓
+ActionPolicy
+    ↓
+Force ESC
+    ↓
+Minecraft executor
+```
 
-## Force ESC 🚨
+Force ESC cannot be disabled or cleared by the model.
 
-Force ESC is independent of the model.
+## Real gameplay
 
-The model cannot trigger, disable, clear or override it. The executor checks it immediately before real input.
+V11 retains the V10 real runtime path and adds the adaptive controller around it. Real input remains opt-in with `QYNL_DRY_RUN=0`.
 
-If it is engaged, real input remains blocked until the operator explicitly resets it.
+Start with dry-run and a dedicated Minecraft test world before enabling real input.
 
 ## Project structure
 
 ```text
 AgentQynl/
 ├── apps/desktop/           # TSX desktop UI
-├── core/                   # settings, audit, provider abstractions
+├── core/
 ├── minecraft/
-│   ├── capture.py          # capture contract
-│   ├── real_capture.py     # MSS Minecraft-region capture
-│   ├── observation.py      # model-facing observation
+│   ├── real_capture.py     # MSS capture
+│   ├── observation.py      # Minecraft observations
 │   ├── vision.py           # vision contract
-│   ├── providers.py        # provider-neutral adapters
-│   ├── v10_provider.py     # real multimodal HTTP provider
-│   ├── planner.py          # strict action parser
+│   ├── providers.py        # provider adapters
+│   ├── v10_provider.py     # multimodal provider
+│   ├── planner.py          # structured planning
 │   ├── goals.py            # goal/context management
-│   ├── state.py            # rolling state
-│   ├── skills.py           # Minecraft micro-skills
-│   ├── executor.py         # dry-run/real executors
-│   ├── input_adapter.py    # restricted PyAutoGUI adapter
-│   └── run_v10.py          # complete runnable V10 loop
+│   ├── v11_model.py        # strict parser + recovery prompt
+│   ├── v11_agent.py        # adaptive closed-loop controller
+│   ├── executor.py         # safe/real executors
+│   └── input_adapter.py    # Minecraft-only input
 ├── memory/
 ├── safety/
-│   └── action_policy.py    # canonical action schema + policy
+│   └── action_policy.py
 ├── evals/
 └── docs/
-    └── V10.md
 ```
 
-## Safety defaults
+## Tests
 
-V10 starts with:
+V11 adds tests covering:
 
-```text
-QYNL_DRY_RUN=1
-```
+- rejection of non-Minecraft action payloads
+- parsing of canonical Minecraft actions
+- repeated-state stuck detection
 
-So you can verify the complete model/capture/planning pipeline without letting the agent control Minecraft.
+Run the project's test suite before real-input testing.
 
-The safety chain is:
+## Important limitation
 
-```text
-Untrusted model output
-        ↓
-Strict JSON parser
-        ↓
-MinecraftAction
-        ↓
-Deny-by-default ActionPolicy
-        ↓
-Bounded action
-        ↓
-Force ESC
-        ↓
-Minecraft executor
-```
+V11 makes the **runtime architecture** substantially more robust. It does not magically turn every vision model into a Minecraft pro. Actual skill still depends on the chosen model, prompt, capture quality, latency, Minecraft version/UI, and task complexity.
 
-## Learning and competence
-
-V10 provides the real interaction loop needed for later skill learning, but it does not pretend that a generic vision model is automatically a Minecraft expert.
-
-For good gameplay, the model still needs strong visual reasoning and useful task context. The important difference is that **the actual runtime path now exists**. There is no longer a missing "next version" whose job is mysteriously to connect the AI to Minecraft.
-
-Useful skill benchmarks include:
-
-- camera/look control
-- movement
-- wood gathering
-- crafting
-- food gathering
-- navigation
-- mining
-- inventory management
-- recovery from being stuck
-- controlled combat
-- long-horizon survival
-
-## Documentation
-
-See `docs/V10.md` for provider configuration, capture setup, action format and safe real-input testing.
+The difference is that V11 can now detect when an action appears not to have produced progress and react instead of blindly assuming success.
 
 ## License
 
