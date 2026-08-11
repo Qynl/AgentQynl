@@ -1,134 +1,136 @@
-# Qynl Agent V14
+# Qynl Agent V15
 
-Qynl is a **Minecraft-only AI agent with temporal perception, hierarchical tasks, explicit goal evaluation and episodic skill memory**.
+Qynl is a **Minecraft-only AI agent with temporal perception, hierarchical tasks, explicit goal evaluation, episodic skill memory and a reliability-controlled runtime**.
 
-## V14: task + skill layer
+## V15: reliable agent loop
 
-V14 builds on V13 and adds the missing longer-term control layer:
+V15 builds on V14 by giving the different agent layers one bounded shared control state and adding independent runtime safeguards plus explicit action verification.
 
 ```text
 User goal
    ↓
-Task Decomposer
+Task / Subtask
    ↓
-Subtask
+┌─────────────────────────┐
+│     V15 Blackboard      │
+│ goal / state / mode /   │
+│ failures / evaluation   │
+└─────────────────────────┘
    ↓
-Temporal Minecraft state
-   ↓
-Relevant past skills
+Temporal perception + skill memory
    ↓
 Planner
    ↓
-ONE MinecraftAction
+Strict action parser
+   ↓
+Runtime Watchdog
    ↓
 ActionPolicy
    ↓
 Force ESC
    ↓
-Minecraft
+Minecraft executor
    ↓
-New observation
+Post-action perception
+   ↓
+Action Verifier
    ↓
 Goal Evaluator
    ↓
-Success / failure evidence
+Skill Memory + Blackboard
    ↓
-Skill Memory
-   ↓
-next subtask / recovery
+next action / subtask / recovery
 ```
 
-## V14 improvements
+## V15 improvements
 
-- 🎯 **Hierarchical task decomposition** into bounded observable subtasks
-- ✅ **Explicit goal evaluator** that can say "not proven" instead of assuming success
-- 🧠 **Episodic skill memory** for reusable experience
-- 🔎 **Relevant-memory retrieval** based on the current goal and situation
-- 📈 **Outcome/reward records** for past attempts
-- 🔄 **Subtask progression** only after explicit evaluation
-- 🧪 V14 memory/task tests
-- 📚 Complete V14 documentation
+- 🧠 **Shared Blackboard** for consistent cross-layer state
+- 🛡️ **Runtime Watchdog** independent of the model
+- ⏱️ **Action duration limits**
+- 🔢 **Consecutive failure budget**
+- ⌛ **Per-step time budget**
+- 🔎 **Dedicated action verification** using pre/post observations
+- 🔄 **Observable-change scoring**
+- 🧪 V15 reliability tests
+- 📚 Complete V15 documentation
 
-## Example task flow
+## Shared Blackboard
 
-A large goal such as `build a small shelter` can become:
-
-```text
-1. collect wood
-       ↓ verified
-2. craft tools
-       ↓ verified
-3. collect blocks
-       ↓ verified
-4. choose location
-       ↓ verified
-5. build shelter
-       ↓ verified
-6. check result
-```
-
-The exact subtasks are generated conservatively and capped. Model text is treated as data and never executed as code.
-
-## Goal evaluation
-
-`minecraft/v14_evaluator.py` provides a separate evaluator for subtasks.
-
-It compares the before/after observations against the subtask's success condition and returns:
-
-```text
-success
-score: 0..1
-evidence
-```
-
-If the evaluator is uncertain or malformed, V14 defaults to **failure / not proven**. That is intentional. A bot confidently declaring "I built the house" while standing in a forest is not artificial intelligence, it is customer support.
-
-## Episodic skill memory
-
-`minecraft/v14_memory.py` stores bounded experiences:
+`minecraft/v15_blackboard.py` provides one bounded source of truth for:
 
 ```text
 goal
-situation
-action type
-outcome
-reward
-lesson
+active subtask
+success hint
+current state
+latest delta
+last action
+last evaluation
+strategy mode
+recent failures
+events
 ```
 
-When Qynl encounters a similar goal/situation, it can retrieve relevant successful or failed experiences as planning context.
+This prevents the planner, evaluator and recovery system from maintaining unrelated versions of what Qynl currently believes is happening.
 
-This is **retrieval-based memory**, not automatic model-weight training. The model does not silently modify itself during gameplay.
+All histories are bounded.
 
-## Why V14 matters
+## Runtime Watchdog
 
-V13 gave Qynl short-term temporal awareness:
+`minecraft/v15_watchdog.py` provides runtime limits that the model cannot override.
+
+It can reject:
+
+- an action exceeding the configured duration
+- further actions after too many consecutive failures
+- a step exceeding its time budget
+
+This is deliberately separate from the model's reasoning.
+
+The model can propose **what might help**. The runtime decides whether the proposal is allowed to execute.
+
+## Action verification
+
+`minecraft/v15_action_verifier.py` compares the temporal state before and after an action.
+
+It checks for observable changes involving:
+
+- entities
+- landmarks
+- hazards
+- UI
+- overall state
+
+This is an action-effect signal, not proof that the complete Minecraft goal succeeded. The V14 goal evaluator remains the authority for subtask success.
+
+## V14 → V15
+
+V14 added:
+
+- hierarchical task decomposition
+- explicit goal evaluation
+- episodic skill memory
+
+V15 adds the reliability layer:
 
 ```text
-What changed recently?
+V14
+Task → Plan → Action → Evaluate → Remember
+
+V15
+Task → Shared State → Plan → Watchdog → Action → Verify → Evaluate → Remember → Shared State
 ```
 
-V14 adds longer-term task awareness:
+That makes failures and state changes available consistently to the next decision instead of being scattered across independent components.
+
+## Safety chain
 
 ```text
-What am I trying to accomplish?
-What subtask am I on?
-Did it actually succeed?
-What worked in similar situations before?
-```
-
-That makes the architecture substantially closer to a task-oriented Minecraft agent.
-
-## Safety
-
-V14 does not expand computer permissions.
-
-All model-generated actions still pass through:
-
-```text
-Strict parser
+Model output
     ↓
-MinecraftAction
+Strict Minecraft parser
+    ↓
+Runtime Watchdog
     ↓
 ActionPolicy
     ↓
@@ -137,17 +139,15 @@ Force ESC
 Minecraft executor
 ```
 
-Task decomposition, evaluation and memory are planning data. They cannot directly execute OS commands.
+No shell access, arbitrary desktop automation, process creation, credentials or unrestricted computer control is introduced.
 
 ## Minecraft-only boundary
 
-The agent is limited to Minecraft-focused visual state, goals, bounded history and Minecraft actions.
-
-It does not receive shell access, arbitrary desktop automation, process creation, unrestricted filesystem access, credentials, or generic computer-control tools.
+The agent is limited to Minecraft-focused visual state, goals, bounded memory and Minecraft actions.
 
 ## Real gameplay
 
-V14 retains the existing real-input runtime. Real input remains opt-in with `QYNL_DRY_RUN=0`.
+V15 retains the existing real-input runtime. Real input remains opt-in with `QYNL_DRY_RUN=0`.
 
 Use a dedicated Minecraft test world and verify Force ESC before enabling real input.
 
@@ -175,27 +175,31 @@ AgentQynl/
 │   ├── v14_tasks.py
 │   ├── v14_evaluator.py
 │   ├── v14_memory.py
+│   ├── v15_blackboard.py
+│   ├── v15_watchdog.py
+│   ├── v15_action_verifier.py
 │   ├── executor.py
 │   └── input_adapter.py
 ├── memory/
 ├── safety/
 ├── evals/
 └── docs/
-    └── V14.md
+    └── V15.md
 ```
 
 ## Tests
 
-V14 adds tests for:
+V15 adds tests for:
 
-- successful skill retrieval
-- task-plan progression
+- bounded blackboard history
+- action duration limits
+- action verification
 
 Run the complete test suite before real-input testing.
 
 ## Limitations
 
-V14 still depends on the selected vision/planning model, capture quality, latency, Minecraft version/UI and task complexity. Memory is retrieval, not magical self-training, and evaluation is conservative when visual evidence is ambiguous.
+V15 improves runtime coordination and reliability. It does not make visual perception infallible or guarantee that an observable change means a task succeeded. Actual gameplay quality still depends on the selected models, capture quality, latency, Minecraft version/UI and task complexity.
 
 ## License
 
