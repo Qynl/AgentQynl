@@ -1,6 +1,6 @@
-# Qynl Agent V22
+# Qynl Agent V23
 
-Qynl is a **Minecraft-only AI agent with temporal perception, hierarchical tasks, explicit goal monitoring, episodic skill memory, recovery, a persistent world model, utility planning, prediction, exploration and short-horizon replanning**.
+Qynl is a **Minecraft-only AI agent with temporal perception, hierarchical tasks, explicit goal monitoring, episodic skill memory, recovery, a persistent world model, utility planning, prediction, exploration, short-horizon replanning and verified experience learning**.
 
 ## License / Ownership
 
@@ -10,15 +10,11 @@ The Qynl Agent source code and original project materials belong to Qynl unless 
 
 Third-party dependencies remain under their own licenses. See [`LICENSE`](LICENSE) for the full project license.
 
-This license is intended to make ownership and permitted use explicit. It does not magically override copyright law, third-party licenses, or rights that cannot legally be waived. Humanity has unfortunately invented lawyers for this exact reason.
-
 ## Installation & First Minecraft Session
 
 This section takes you from a fresh download to actually running Qynl with Minecraft.
 
 ### 1. Download Qynl
-
-Clone the repository:
 
 ```bash
 git clone https://github.com/Qynl/AgentQynl.git
@@ -29,18 +25,17 @@ Or download the repository as a ZIP from GitHub and extract it.
 
 ### 2. Install prerequisites
 
-Install the versions required by the files in the repository before running the agent. At minimum, you need:
+At minimum:
 
 - Git, if cloning
 - Python for the agent backend
 - Node.js + npm for the TSX desktop application
 - Minecraft Java Edition
-- A supported Minecraft version/configuration used by this repository
+- The Minecraft version/configuration supported by the current repository
 
-Then install the project's Python dependencies and desktop dependencies using the dependency files already included in the repository:
+Set up the Python environment using the dependency files in the repository:
 
 ```bash
-# Python environment
 python -m venv .venv
 
 # Windows
@@ -49,11 +44,10 @@ python -m venv .venv
 # Linux/macOS
 source .venv/bin/activate
 
-# Install Python dependencies if requirements.txt exists
 pip install -r requirements.txt
 ```
 
-For the desktop app:
+Then install the desktop dependencies:
 
 ```bash
 cd apps/desktop
@@ -61,15 +55,13 @@ npm install
 cd ../..
 ```
 
-If the repository's dependency files specify different commands or versions, follow those files. They are the source of truth.
+If the repository's dependency files specify different versions or commands, follow those files.
 
 ### 3. Configure the AI provider
 
-Qynl can use the model provider supported by the current provider configuration. Put provider credentials in the expected environment configuration rather than hard-coding keys into source code.
+Use the provider configuration supported by the current build. Keep credentials in environment configuration and never hard-code API keys into source files.
 
-Never commit API keys to GitHub.
-
-For a safe first run, keep real input disabled:
+For the first run:
 
 ```text
 QYNL_DRY_RUN=1
@@ -77,30 +69,22 @@ QYNL_DRY_RUN=1
 
 ### 4. Start Minecraft
 
-Launch Minecraft and enter a **dedicated test world**.
+Launch Minecraft Java Edition and enter a **dedicated test world**. Do not start by testing on a valuable survival world. When an AI agent makes a questionable decision, your carefully built house does not need to participate in the scientific process.
 
-Do not begin by testing on a valuable survival world. The entire point of a test environment is that when the AI does something impressively stupid, your house does not have to become part of the experiment.
+### 5. Test perception in dry-run mode
 
-Keep the Minecraft window visible and use the game's normal input configuration expected by the current input adapter.
+Confirm that Qynl can:
 
-### 5. Test capture and perception first
-
-Start Qynl in dry-run mode. Confirm that it can:
-
-1. capture the Minecraft screen
-2. recognize the Minecraft scene
-3. produce observations
-4. build/update its world model
+1. capture Minecraft
+2. recognize the scene
+3. create observations
+4. update the world model
 5. generate candidate actions
 6. avoid executing real input
 
-Do not enable real gameplay until those checks work.
-
 ### 6. Test Force ESC
 
-Before real input, verify the emergency stop.
-
-The intended safety chain is:
+Before real input, verify that the emergency stop reliably interrupts the agent.
 
 ```text
 AI
@@ -118,21 +102,19 @@ Force ESC
 Minecraft
 ```
 
-If Force ESC does not reliably stop the agent, **do not enable real input**.
+If Force ESC does not work reliably, keep real input disabled.
 
 ### 7. Enable real gameplay
 
-Once dry-run and the emergency stop have been verified, enable the real-input configuration used by the current runtime:
+After dry-run and Force ESC have been verified:
 
 ```text
 QYNL_DRY_RUN=0
 ```
 
-Start Minecraft first, then start Qynl. Begin with a simple goal such as exploration or collecting a basic resource rather than immediately asking it to complete an entire Minecraft speedrun. The latter is an excellent way to produce a very sophisticated failure report.
+Start Minecraft first, then Qynl. Begin with simple goals such as looking around, exploring or collecting a basic resource.
 
-### 8. What happens while it plays
-
-The V22 loop is approximately:
+### 8. Gameplay loop
 
 ```text
 Minecraft screen
@@ -159,20 +141,18 @@ Observe again
  ↓
 Verify progress
  ↓
+Learn from verified result
+ ↓
 Update memory/world/goal
  ↓
 Replan if needed
 ```
 
-Qynl should repeatedly observe and correct itself instead of blindly executing a long precomputed sequence.
-
 ## Desktop App
 
-The TSX desktop application is the recommended way to operate Qynl when its current build supports the required backend controls.
+The TSX desktop application is the recommended control interface when the current build supports the required backend controls.
 
-### Start the desktop app
-
-From the repository:
+### Start it
 
 ```bash
 cd apps/desktop
@@ -180,22 +160,20 @@ npm install
 npm run dev
 ```
 
-Use the script names defined in `apps/desktop/package.json` if the current project uses different names.
+Use the scripts defined in `apps/desktop/package.json` if the current build uses different names.
 
 ### Desktop workflow
-
-The intended workflow is:
 
 ```text
 Open Qynl Desktop
  ↓
-Select/configure provider
+Configure provider
  ↓
-Check Minecraft connection/capture
+Check Minecraft capture
  ↓
 Check safety status
  ↓
-Keep DRY RUN enabled initially
+Keep DRY RUN ON
  ↓
 Start observation
  ↓
@@ -205,168 +183,118 @@ Set Minecraft goal
  ↓
 Start agent
  ↓
-Monitor actions
+Monitor actions / learning
  ↓
 Use Force ESC if necessary
 ```
 
-### Recommended desktop settings
+Recommended initial settings:
 
-Before real gameplay, check:
-
-- **Provider:** correct model/provider configuration
-- **Dry Run:** ON for initial testing
+- **Dry Run:** ON
+- **Watchdog:** ON
+- **Force ESC:** ON and tested
 - **Action Rate:** conservative
-- **Watchdog:** enabled
-- **Force ESC:** enabled and tested
-- **Vision confidence:** do not disable uncertainty handling
-- **Recovery:** enabled
+- **Recovery:** ON
 - **Memory:** bounded
-- **Goal:** simple and testable
+- **Goal:** simple and measurable
 
-Do not paste API keys into screenshots, issues, Discord messages, or GitHub commits.
+Never paste API keys into screenshots, issues, Discord messages or commits.
 
-## V22: Hierarchical Planning + Closed-Loop Execution
+## V23: Verified Learning + Curriculum
 
-V22 turns the previous planning components into a more explicit hierarchy: **goal → subtask → short action sequence → one verified action → update → replan**.
+V23 closes the loop between gameplay and learning. Qynl can now use **verified successful experiences** to influence future action ranking and progressively choose harder Minecraft tasks.
 
 ```text
-Goal
+Observe
  ↓
-Goal Monitor
+Understand
  ↓
-Subtask Graph
+Plan
  ↓
-World Model + Spatial Memory + Skill Memory
- ↓
-Candidate Planner
- ↓
-Transition Predictor
- ↓
-Short-Horizon Sequencer
- ↓
-Replan Policy
- ↓
-Rate Limiter
- ↓
-Watchdog
- ↓
-ActionPolicy
- ↓
-Force ESC
- ↓
-Minecraft
+Act
  ↓
 Verify
  ↓
-Goal/Subtask update
+Episode Recorder
+ ↓
+Skill Learner
+ ↓
+Capability Estimate
+ ↓
+Curriculum
+ ↓
+Future planning
 ```
 
-## V22 improvements
+### Verified Skill Learning
 
-- 🎯 **Explicit Goal Monitor** with ACTIVE / PROGRESS / STALLED / COMPLETE / FAILED
-- 🌳 **Hierarchical Subtask Graph**
-- 🧩 **Bounded short-horizon action sequencing**
-- 🔄 **Deterministic replanning triggers**
-- 🧠 **Goal/subtask progress feedback**
-- 🛑 **Terminal-state handling** so completed/failed goals are not endlessly replanned
-- 🔒 **Every action still passes the existing safety pipeline**
-- 🧪 V22 goal/sequencing/replanning tests
-- 📚 Complete V22 documentation
+`minecraft/v23_skill_learner.py` records compact experience only after the runtime verifies the outcome.
 
-## Goal Monitor
+Each example contains:
 
-`minecraft/v22_goal_monitor.py` gives the current objective an explicit state:
+- context
+- action
+- bounded reward
+- verification status
+
+Unverified events are ignored. A hallucinated success is not allowed to become a learned skill.
+
+### Episode Recorder
+
+`minecraft/v23_episode.py` keeps a bounded record of recent interactions and separates verified outcomes from uncertain ones.
 
 ```text
-ACTIVE
-PROGRESS
-STALLED
-COMPLETE
-FAILED
+interaction
+ ↓
+verification
+ ↓
+learning data
 ```
 
-Completion requires strong completion evidence **and** enough confidence. A single uncertain visual cue is not treated as proof that the objective is complete.
+### Progressive Curriculum
 
-## Hierarchical Subtasks
-
-`minecraft/v22_subtasks.py` represents larger Minecraft objectives as smaller pieces.
+`minecraft/v23_curriculum.py` lets Qynl select progressively harder goals based on its conservative capability estimate.
 
 Example:
 
 ```text
-Survive first night
-├── collect wood
-├── craft tools
-├── collect food
-└── build shelter
+1  look around
+2  collect wood
+3  craft tools
+4  build shelter
+5  explore caves
+...
 ```
 
-The immediate action can therefore serve a specific subtask while the monitor tracks the larger objective.
+The curriculum is configurable and its difficulty values are only heuristics.
 
-## Short-Horizon Sequencing
+### Capability Estimation
 
-`minecraft/v22_action_sequence.py` can build a small sequence from already-ranked candidates.
+`minecraft/v23_capability.py` updates capability only from verified outcomes. Recovery-heavy successes have reduced influence, while unverified outcomes have no influence.
 
-The sequence is deliberately short. Qynl does **not** blindly execute a huge macro:
+This prevents one lucky or uncertain event from suddenly convincing the agent that it has become a Minecraft professional. Humans already have enough confidence inflation; the software does not need it.
 
-```text
-Plan 2–3 steps
- ↓
-Execute ONE
- ↓
-Observe
- ↓
-Verify
- ↓
-Continue / modify / abort
-```
+## V22: Hierarchical Planning
 
-This preserves the agent's ability to react to the actual Minecraft state.
-
-## Replanning
-
-`minecraft/v22_replan.py` provides explicit replanning triggers:
-
-- selected action rejected
-- repeated state without progress
-- high uncertainty
-- recovery exhausted
-
-Terminal goal states do not trigger pointless replanning.
-
-## V21 → V22
-
-V21 made uncertainty explicit:
-
-```text
-Observe → Predict → ACT / EXPLORE / STOP → Verify
-```
-
-V22 adds hierarchy and persistent plan control:
+V22 established the structure V23 learns from:
 
 ```text
 Goal
  ↓
 Subtask
  ↓
-Plan short horizon
+Short plan
  ↓
-Execute one step
+One action
  ↓
 Verify
  ↓
 Update
  ↓
-Replan if necessary
+Replan
 ```
 
-The agent now has a clearer separation between:
-
-- **what** it wants
-- **what subgoal** it is currently pursuing
-- **which action** it should perform
-- **whether the plan is still valid**
+V23 adds verified learning to this loop.
 
 ## Evolution
 
@@ -384,27 +312,29 @@ V20  Persistent world model + utility planning
 V21  Prediction + spatial memory + exploration
  ↓
 V22  Goal hierarchy + short-horizon planning + replanning
+ ↓
+V23  Verified learning + capability + progressive curriculum
 ```
 
 ## Safety chain
 
 ```text
-Model output
-    ↓
+Model / learned preference
+        ↓
 Strict Minecraft action representation
-    ↓
+        ↓
 Action Rate Limiter
-    ↓
+        ↓
 Runtime Watchdog
-    ↓
+        ↓
 ActionPolicy
-    ↓
+        ↓
 Force ESC
-    ↓
+        ↓
 Minecraft executor
 ```
 
-Short-horizon sequences, subtasks and replanning cannot bypass this chain.
+The learner is only a ranking signal. It cannot directly execute actions or bypass safety gates.
 
 No shell access, arbitrary OS commands, credentials or unrestricted desktop automation is introduced.
 
@@ -459,30 +389,35 @@ AgentQynl/
 │   ├── v22_action_sequence.py
 │   ├── v22_subtasks.py
 │   ├── v22_replan.py
+│   ├── v23_skill_learner.py
+│   ├── v23_episode.py
+│   ├── v23_curriculum.py
+│   ├── v23_capability.py
 │   ├── executor.py
 │   └── input_adapter.py
 ├── memory/
 ├── safety/
 ├── evals/
 └── docs/
-    └── V22.md
+    ├── V22.md
+    └── V23.md
 ```
 
 ## Tests
 
-V22 adds tests for:
+V23 adds tests for:
 
-- goal completion confidence
-- stalled-goal detection
-- bounded action sequences
-- hierarchical subtasks
-- deterministic replanning
+- rejecting unverified learning data
+- verified skill ranking
+- verified episode accounting
+- curriculum capability bounds
+- conservative capability updates
 
 Run the complete test suite before real-input testing.
 
 ## Limitations
 
-V22 is still a screen-based agent. It cannot guarantee unseen world state, perfect goal recognition or perfect predictions. Short-horizon planning is deliberately bounded so Qynl can correct itself frequently.
+V23 is a bounded experience-learning layer, not full reinforcement learning or automatic foundation-model training. Its improvements depend on perception quality, verification quality, model quality, latency and the Minecraft environment.
 
 ## License
 
