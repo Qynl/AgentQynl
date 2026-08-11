@@ -1,16 +1,89 @@
-# Qynl Agent V24
+# Qynl Agent V26
 
-Qynl is a **Minecraft-only AI agent with temporal perception, hierarchical tasks, explicit goal monitoring, episodic skill memory, recovery, a persistent world model, utility planning, prediction, exploration, short-horizon replanning, verified experience learning and a guarded real-time runtime**.
+Qynl is a **Minecraft-only autonomous AI agent** with visual perception, hierarchical planning, persistent world state, verified learning, real-time runtime controls, mission-level autonomy and bounded recovery.
 
 ## License / Ownership
 
 **Qynl Agent Proprietary License. All rights reserved.**
 
-The Qynl Agent source code and original project materials belong to Qynl unless a file or dependency explicitly states otherwise. You may inspect and evaluate the project for personal, non-commercial use, but you may not redistribute, rebrand, sell, sublicense, copy substantial portions, create a competing derivative project, remove attribution, or claim the project or its substantial source code as your own without written permission.
+See [`LICENSE`](LICENSE). Third-party dependencies remain under their own licenses.
 
-Third-party dependencies remain under their own licenses. See [`LICENSE`](LICENSE) for the full project license.
+## V26: Long-Running Mission Autonomy
 
-## Installation & First Minecraft Session
+V26 is about making Qynl behave like one coherent agent across an entire Minecraft mission rather than a sequence of disconnected actions.
+
+```text
+MISSION
+  ↓
+OBJECTIVE
+  ↓
+SUBTASKS
+  ↓
+WORLD MODEL + MEMORY
+  ↓
+PLAN
+  ↓
+ONE BOUNDED ACTION
+  ↓
+VERIFY
+  ↓
+UPDATE PROGRESS
+  ↓
+LEARN VERIFIED LESSON
+  ↓
+CONTINUE / RECOVER / REPLAN
+  ↓
+MISSION RESULT
+```
+
+### Mission Control
+
+`minecraft/v26_mission_control.py` adds an explicit mission state machine:
+
+- `IDLE`
+- `RUNNING`
+- `PAUSED`
+- `COMPLETED`
+- `FAILED`
+- `ABORTED`
+
+Missions have a progress value, blockers and a maximum runtime. A mission that exceeds its runtime budget fails instead of continuing forever.
+
+Operators can pause or abort a mission without giving the planner unrestricted control.
+
+### Mission Memory
+
+`minecraft/v26_mission_memory.py` stores compact **verified** mission results:
+
+- mission identifier
+- outcome
+- verified status
+- bounded reward
+- short lesson
+
+Unverified results are discarded. Memory size and lesson length are bounded.
+
+### Deterministic Recovery
+
+`minecraft/v26_recovery.py` provides a bounded recovery ladder for uncertainty and stalls:
+
+```text
+REOBSERVE
+   ↓
+RELOCALIZE
+   ↓
+REPLAN
+   ↓
+BACKTRACK
+   ↓
+PAUSE
+   ↓
+ABORT
+```
+
+The recovery budget prevents endless loops. When recovery is exhausted, the mission aborts.
+
+## Serious real-session workflow
 
 ### 1. Download
 
@@ -19,19 +92,17 @@ git clone https://github.com/Qynl/AgentQynl.git
 cd AgentQynl
 ```
 
-Or download the repository as a ZIP from GitHub and extract it.
+Or download the repository ZIP from GitHub.
 
-### 2. Prerequisites
+### 2. Install prerequisites
 
 At minimum:
 
-- Git, if cloning
-- Python for the agent backend
-- Node.js + npm for the TSX desktop application
+- Python for the backend
+- Node.js + npm for the TSX desktop app
 - Minecraft Java Edition
-- The Minecraft version/configuration supported by the current repository
-
-Set up Python:
+- Git if cloning
+- the Minecraft version/configuration supported by this repository
 
 ```bash
 python -m venv .venv
@@ -43,23 +114,19 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
-```
 
-Install desktop dependencies:
-
-```bash
 cd apps/desktop
 npm install
 cd ../..
 ```
 
-Follow repository dependency files if they specify different versions or commands.
+Follow the actual dependency files in the repository if they specify different commands.
 
-### 3. Configure the AI provider
+### 3. Configure the provider
 
-Use the provider configuration supported by the current build. Keep credentials in environment configuration and never hard-code API keys into source files.
+Keep provider credentials in environment configuration. Never hard-code or commit API keys.
 
-First run:
+Start safely:
 
 ```text
 QYNL_DRY_RUN=1
@@ -67,49 +134,67 @@ QYNL_DRY_RUN=1
 
 ### 4. Start Minecraft
 
-Launch Minecraft Java Edition and enter a **dedicated test world**. Do not start on a valuable survival world. An AI agent is perfectly capable of turning your house into a case study.
+Use a **dedicated test world**. Do not use a valuable survival world for the first autonomous sessions. Humans spent thousands of years inventing civilization, and then we gave the computer permission to punch trees.
 
-### 5. Dry-run verification
+### 5. Dry-run first
 
-Confirm that Qynl can:
+Verify:
 
-1. capture Minecraft
-2. recognize the scene
-3. create observations
-4. update the world model
-5. generate candidate actions
-6. learn only from verified outcomes
-7. avoid executing real input
+- screen capture
+- visual perception
+- world model
+- goals/subtasks
+- planning
+- verification
+- V23 learning
+- V26 mission control
+- recovery
+- Force ESC
+- watchdog
 
-### 6. Test Force ESC
+No real input should execute in dry-run mode.
 
-Before real input, verify that the emergency stop reliably interrupts the agent.
+### 6. Run a real mission
+
+Only after the dry-run checks pass:
 
 ```text
-AI
- ↓
-Action validation
- ↓
-Rate limiter
- ↓
-Runtime watchdog
- ↓
-ActionPolicy
- ↓
-Guarded Executor
- ↓
-Force ESC
- ↓
-Minecraft
+QYNL_DRY_RUN=0
 ```
 
-If Force ESC does not work reliably, keep real input disabled.
+Start with an objectively verifiable mission:
+
+```text
+Collect 16 logs
+Craft a stone pickaxe
+Build a shelter
+Reach a specified location
+```
+
+Avoid vague objectives such as `play Minecraft well`. A machine cannot reliably verify something humans themselves argue about on Reddit for six hours.
+
+### 7. Monitor the mission
+
+The runtime should continuously provide:
+
+```text
+Mission status
+Progress
+Current subtask
+Current action
+Verification result
+Recovery state
+Runtime health
+Learning events
+```
+
+Keep early real sessions supervised.
 
 ## Desktop App
 
-The TSX desktop application is the recommended control interface when the current build supports the required backend controls.
+The TSX desktop app is intended to be the main operator interface.
 
-Start it with the scripts defined by `apps/desktop/package.json`. The typical development command is:
+Typical development startup:
 
 ```bash
 cd apps/desktop
@@ -117,30 +202,32 @@ npm install
 npm run dev
 ```
 
-Desktop workflow:
+Use the scripts actually defined in `apps/desktop/package.json` if they differ.
+
+Recommended workflow:
 
 ```text
 Open Qynl Desktop
  ↓
-Configure provider
+Provider
  ↓
-Check Minecraft capture
+Minecraft capture
  ↓
-Check safety status
+Safety check
  ↓
-DRY RUN ON
+DRY RUN
  ↓
-Start observation
+Observe
  ↓
-Review state
+Create mission
  ↓
-Set Minecraft goal
+Start
  ↓
-Start agent
+Monitor
  ↓
-Monitor actions + telemetry
+Pause / Abort / Force ESC when necessary
  ↓
-Use Force ESC if necessary
+Review mission result
 ```
 
 Recommended initial settings:
@@ -150,132 +237,58 @@ Recommended initial settings:
 - **Force ESC:** ON and tested
 - **Action Rate:** conservative
 - **Recovery:** ON
-- **Memory:** bounded
-- **Goal:** simple and measurable
+- **Bounded Memory:** ON
+- **Simple verified mission:** ON
 
-Never paste API keys into screenshots, issues, Discord messages or commits.
-
-## V24: Real-Time Runtime
-
-V24 is the **real-session engineering update**. The focus is no longer just adding smarter modules. Qynl now treats actual Minecraft gameplay as a controlled runtime with explicit limits, failure handling, telemetry and a guarded execution boundary.
+## Architecture
 
 ```text
-Minecraft Capture
- ↓
-Perception
- ↓
-World Model / Memory
- ↓
-Goal + Subtasks
- ↓
-Planner + Predictor
- ↓
-Verified Learning
- ↓
-ActionPolicy
- ↓
-Guarded Executor
- ↓
-Minecraft Input Adapter
- ↓
-Observe Result
- ↓
-Telemetry + Verification
- ↓
-Learn / Replan
+                   ┌──────────────────┐
+                   │  Mission Control │
+                   └────────┬─────────┘
+                            ↓
+                    Goal / Subtasks
+                            ↓
+              ┌─────────────┴─────────────┐
+              ↓                           ↓
+        World Model                  Mission Memory
+              ↓                           ↑
+         Perception                      │
+              ↓                           │
+       Planner / Predictor               │
+              ↓                           │
+        Action Policy                    │
+              ↓                           │
+       Guarded Executor                  │
+              ↓                           │
+          Minecraft ─────→ Verification ─┘
+              ↑                 ↓
+              └──── Recovery / Replan
 ```
 
-### Real-Time Runtime
-
-`minecraft/v24_realtime_runtime.py` adds:
-
-- bounded observation rate
-- bounded action latency
-- consecutive failure budget
-- explicit start/stop state
-- dry-run isolation
-
-If the configured failure budget is exhausted, the runtime stops instead of continuing blindly.
-
-### Guarded Executor
-
-`minecraft/v24_task_executor.py` checks:
-
-1. emergency stop
-2. policy permission
-3. dry-run state
-4. action validity
-
-The planner and learned preferences do not directly receive unrestricted OS control.
-
-### Session Telemetry
-
-`minecraft/v24_session.py` keeps bounded session statistics:
-
-- event count
-- verified events
-- verified reward
-
-It does not store credentials or raw screenshots in this component.
-
-## How to run a serious real session
-
-1. Create a dedicated Minecraft test world.
-2. Start Qynl in **DRY RUN**.
-3. Confirm screen capture and perception.
-4. Confirm goals and subtasks work.
-5. Test Force ESC.
-6. Run a short dry-run session.
-7. Inspect failures and telemetry.
-8. Enable real input only after those checks pass.
-9. Start with a simple goal.
-10. Monitor the first real session.
-11. Review verified outcomes and failures.
-12. Improve the system based on measured failures, not guesses.
-
-The goal of V24 is to make this cycle repeatable:
+## Safety boundary
 
 ```text
-RUN
- ↓
-MEASURE
- ↓
-VERIFY
- ↓
-LEARN
- ↓
-IMPROVE
- ↓
-RUN AGAIN
+Mission / planner / learned lesson
+             ↓
+        ActionPolicy
+             ↓
+        Rate Limiter
+             ↓
+         Watchdog
+             ↓
+      Guarded Executor
+             ↓
+         Force ESC
+             ↓
+         Minecraft
 ```
 
-## V23: Verified Learning
+Learning, mission memory and recovery are **not execution authorities**.
 
-V23 introduced learning from verified Minecraft outcomes. `minecraft/v23_skill_learner.py` changes future action ranking only from verified experiences. `minecraft/v23_episode.py` keeps bounded interaction history. `minecraft/v23_curriculum.py` selects progressively harder tasks, and `minecraft/v23_capability.py` estimates capability conservatively.
+V26 does not introduce unrestricted shell access, arbitrary OS commands or credential access.
 
-Unverified events do not become skills.
-
-## V22: Hierarchical Planning
-
-V22 established:
-
-```text
-Goal
- ↓
-Subtask
- ↓
-Short plan
- ↓
-One action
- ↓
-Verify
- ↓
-Update
- ↓
-Replan
-```
-
-## Evolution
+## Version history
 
 ```text
 V13  Temporal awareness
@@ -295,49 +308,9 @@ V22  Goal hierarchy + short-horizon planning + replanning
 V23  Verified learning + capability + progressive curriculum
  ↓
 V24  Real-time runtime + guarded execution + telemetry
+ ↓
+V26  Long-running missions + structured mission memory + deterministic recovery
 ```
-
-## Safety invariants
-
-V24 deliberately enforces these principles:
-
-- **Dry run must never execute a real action.**
-- **Emergency stop takes priority over execution.**
-- **Policy rejection prevents execution.**
-- **Learned data is not an execution authority.**
-- **The runtime stops after its failure budget is exhausted.**
-- **Telemetry is bounded.**
-- **Credentials are not part of session telemetry.**
-
-## Safety chain
-
-```text
-Model / learned preference
-        ↓
-Strict Minecraft action representation
-        ↓
-Action Rate Limiter
-        ↓
-Runtime Watchdog
-        ↓
-ActionPolicy
-        ↓
-Guarded Executor
-        ↓
-Force ESC
-        ↓
-Minecraft executor
-```
-
-## Minecraft-only boundary
-
-Qynl is designed around Minecraft-focused visual state, Minecraft goals, bounded memory and Minecraft actions.
-
-## Real gameplay
-
-Real input remains opt-in with `QYNL_DRY_RUN=0`.
-
-Use a dedicated Minecraft test world and verify Force ESC before enabling real input. Keep the first real sessions supervised.
 
 ## Project structure
 
@@ -368,6 +341,9 @@ AgentQynl/
 │   ├── v24_realtime_runtime.py
 │   ├── v24_task_executor.py
 │   ├── v24_session.py
+│   ├── v26_mission_control.py
+│   ├── v26_mission_memory.py
+│   ├── v26_recovery.py
 │   ├── executor.py
 │   └── input_adapter.py
 ├── memory/
@@ -376,24 +352,27 @@ AgentQynl/
 └── docs/
     ├── V22.md
     ├── V23.md
-    └── V24.md
+    ├── V24.md
+    └── V26.md
 ```
 
 ## Tests
 
-V24 adds tests for:
+V26 adds tests for:
 
-- failure-budget shutdown
-- dry-run isolation
-- emergency-stop priority
-- bounded telemetry
-- verification-scoped session statistics
+- mission lifecycle
+- completion state
+- ignoring unverified mission results
+- deterministic recovery escalation
+- recovery abort behavior
 
-Run the complete test suite before real-input testing.
+Run the full test suite before real-input testing.
 
-## Limitations
+## What V26 does not claim
 
-V24 is a serious runtime foundation, not a claim of perfect autonomous Minecraft gameplay. Reliability still depends on perception, model quality, latency, input handling, verification and the actual Minecraft environment. The point of V24 is that failures are now measurable, bounded and much easier to improve systematically.
+V26 is a serious autonomy architecture update, not proof that Qynl can already complete arbitrary Minecraft missions flawlessly. Reliability still depends on the complete perception, model, planning, input and verification stack.
+
+The important change is that long-running failures are now represented explicitly, bounded, recoverable and measurable instead of being hidden inside an endless action loop.
 
 ## License
 
