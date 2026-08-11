@@ -2,6 +2,230 @@
 
 Qynl is a **Minecraft-only AI agent with temporal perception, hierarchical tasks, explicit goal monitoring, episodic skill memory, recovery, a persistent world model, utility planning, prediction, exploration and short-horizon replanning**.
 
+## License / Ownership
+
+**Qynl Agent Proprietary License. All rights reserved.**
+
+The Qynl Agent source code and original project materials belong to Qynl unless a file or dependency explicitly states otherwise. You may inspect and evaluate the project for personal, non-commercial use, but you may not redistribute, rebrand, sell, sublicense, copy substantial portions, create a competing derivative project, remove attribution, or claim the project or its substantial source code as your own without written permission.
+
+Third-party dependencies remain under their own licenses. See [`LICENSE`](LICENSE) for the full project license.
+
+This license is intended to make ownership and permitted use explicit. It does not magically override copyright law, third-party licenses, or rights that cannot legally be waived. Humanity has unfortunately invented lawyers for this exact reason.
+
+## Installation & First Minecraft Session
+
+This section takes you from a fresh download to actually running Qynl with Minecraft.
+
+### 1. Download Qynl
+
+Clone the repository:
+
+```bash
+git clone https://github.com/Qynl/AgentQynl.git
+cd AgentQynl
+```
+
+Or download the repository as a ZIP from GitHub and extract it.
+
+### 2. Install prerequisites
+
+Install the versions required by the files in the repository before running the agent. At minimum, you need:
+
+- Git, if cloning
+- Python for the agent backend
+- Node.js + npm for the TSX desktop application
+- Minecraft Java Edition
+- A supported Minecraft version/configuration used by this repository
+
+Then install the project's Python dependencies and desktop dependencies using the dependency files already included in the repository:
+
+```bash
+# Python environment
+python -m venv .venv
+
+# Windows
+.venv\\Scripts\\activate
+
+# Linux/macOS
+source .venv/bin/activate
+
+# Install Python dependencies if requirements.txt exists
+pip install -r requirements.txt
+```
+
+For the desktop app:
+
+```bash
+cd apps/desktop
+npm install
+cd ../..
+```
+
+If the repository's dependency files specify different commands or versions, follow those files. They are the source of truth.
+
+### 3. Configure the AI provider
+
+Qynl can use the model provider supported by the current provider configuration. Put provider credentials in the expected environment configuration rather than hard-coding keys into source code.
+
+Never commit API keys to GitHub.
+
+For a safe first run, keep real input disabled:
+
+```text
+QYNL_DRY_RUN=1
+```
+
+### 4. Start Minecraft
+
+Launch Minecraft and enter a **dedicated test world**.
+
+Do not begin by testing on a valuable survival world. The entire point of a test environment is that when the AI does something impressively stupid, your house does not have to become part of the experiment.
+
+Keep the Minecraft window visible and use the game's normal input configuration expected by the current input adapter.
+
+### 5. Test capture and perception first
+
+Start Qynl in dry-run mode. Confirm that it can:
+
+1. capture the Minecraft screen
+2. recognize the Minecraft scene
+3. produce observations
+4. build/update its world model
+5. generate candidate actions
+6. avoid executing real input
+
+Do not enable real gameplay until those checks work.
+
+### 6. Test Force ESC
+
+Before real input, verify the emergency stop.
+
+The intended safety chain is:
+
+```text
+AI
+ ↓
+Action validation
+ ↓
+Rate limiter
+ ↓
+Runtime watchdog
+ ↓
+ActionPolicy
+ ↓
+Force ESC
+ ↓
+Minecraft
+```
+
+If Force ESC does not reliably stop the agent, **do not enable real input**.
+
+### 7. Enable real gameplay
+
+Once dry-run and the emergency stop have been verified, enable the real-input configuration used by the current runtime:
+
+```text
+QYNL_DRY_RUN=0
+```
+
+Start Minecraft first, then start Qynl. Begin with a simple goal such as exploration or collecting a basic resource rather than immediately asking it to complete an entire Minecraft speedrun. The latter is an excellent way to produce a very sophisticated failure report.
+
+### 8. What happens while it plays
+
+The V22 loop is approximately:
+
+```text
+Minecraft screen
+ ↓
+Vision
+ ↓
+World Model + Spatial Memory
+ ↓
+Goal Monitor
+ ↓
+Subtask Graph
+ ↓
+Candidate Planner
+ ↓
+Prediction
+ ↓
+Short-Horizon Plan
+ ↓
+Safety validation
+ ↓
+One action
+ ↓
+Observe again
+ ↓
+Verify progress
+ ↓
+Update memory/world/goal
+ ↓
+Replan if needed
+```
+
+Qynl should repeatedly observe and correct itself instead of blindly executing a long precomputed sequence.
+
+## Desktop App
+
+The TSX desktop application is the recommended way to operate Qynl when its current build supports the required backend controls.
+
+### Start the desktop app
+
+From the repository:
+
+```bash
+cd apps/desktop
+npm install
+npm run dev
+```
+
+Use the script names defined in `apps/desktop/package.json` if the current project uses different names.
+
+### Desktop workflow
+
+The intended workflow is:
+
+```text
+Open Qynl Desktop
+ ↓
+Select/configure provider
+ ↓
+Check Minecraft connection/capture
+ ↓
+Check safety status
+ ↓
+Keep DRY RUN enabled initially
+ ↓
+Start observation
+ ↓
+Review detected state
+ ↓
+Set Minecraft goal
+ ↓
+Start agent
+ ↓
+Monitor actions
+ ↓
+Use Force ESC if necessary
+```
+
+### Recommended desktop settings
+
+Before real gameplay, check:
+
+- **Provider:** correct model/provider configuration
+- **Dry Run:** ON for initial testing
+- **Action Rate:** conservative
+- **Watchdog:** enabled
+- **Force ESC:** enabled and tested
+- **Vision confidence:** do not disable uncertainty handling
+- **Recovery:** enabled
+- **Memory:** bounded
+- **Goal:** simple and testable
+
+Do not paste API keys into screenshots, issues, Discord messages, or GitHub commits.
+
 ## V22: Hierarchical Planning + Closed-Loop Execution
 
 V22 turns the previous planning components into a more explicit hierarchy: **goal → subtask → short action sequence → one verified action → update → replan**.
@@ -262,4 +486,4 @@ V22 is still a screen-based agent. It cannot guarantee unseen world state, perfe
 
 ## License
 
-Not specified yet.
+See [`LICENSE`](LICENSE). The project uses the **Qynl Agent Proprietary License** unless a specific file states otherwise.
