@@ -1,161 +1,197 @@
-# Qynl Agent V30
+# Qynl Agent V50
 
-Qynl is a **Minecraft-only autonomous AI agent** with visual perception, hierarchical planning, persistent world state, verified learning, real-time runtime controls, mission-level autonomy, bounded recovery, decision gating, runtime health monitoring and deterministic evaluation.
+Qynl is a **Minecraft-only autonomous AI agent** with visual perception, temporal state, hierarchical planning, persistent world state, verified learning, mission-level autonomy, recovery, typed actions, deterministic evaluation and an explicit runtime safety architecture.
 
-## License / Ownership
+## V50: Architecture Reset
 
-**Qynl Agent Proprietary License. All rights reserved.**
-
-See [`LICENSE`](LICENSE). Third-party dependencies remain under their own licenses.
-
-## V30: Reliability + Evaluation
-
-V30 is the major engineering update that turns Qynl from a growing collection of agent modules into a more measurable control system.
+V50 is the largest architectural update so far. Instead of continuing to bolt features onto the agent, V50 introduces explicit runtime primitives and connects them around a single control loop.
 
 ```text
-OBSERVE
-   ↓
-UNDERSTAND
-   ↓
-GENERATE CANDIDATES
-   ↓
-DECISION GATE
-   ↓
-EXECUTE ONE BOUNDED ACTION
-   ↓
+MINECRAFT
+    ↓
+OBSERVATION BUFFER
+    ↓
+WORLD / STATE MODEL
+    ↓
+MISSION ENGINE
+    ↓
+PLANNER + MODEL
+    ↓
+TYPED MINECRAFT ACTION
+    ↓
+INDEPENDENT SAFETY SUPERVISOR
+    ↓
+INPUT ADAPTER
+    ↓
+MINECRAFT
+    ↓
 VERIFY
-   ↓
-HEALTH CHECK
-   ↓
-LEARN / REPLAN
+    ↓
+MEMORY + LEARNING
+    ↓
+REPLAN
 ```
 
-The key rule is simple: **learning and planning can suggest actions, but neither can bypass the safety/execution boundary.**
+The critical rule remains: **the model can propose; the runtime decides.**
 
-## What V30 adds
+## What V50 adds
 
-### 1. Typed agent contracts
+### 1. Explicit agent state machine
 
-`minecraft/v30_contracts.py`
+`minecraft/v50_agent_state.py`
 
-Introduces explicit representations for:
-
-- observations
-- confidence bands
-- candidate actions
-- decisions
-- verification results
-
-This reduces implicit state passing between perception, planning, execution and evaluation.
-
-### 2. Uncertainty-aware Decision Gate
-
-`minecraft/v30_decision_gate.py`
-
-Before selecting an action, V30 checks:
-
-- observation confidence
-- action risk
-- expected progress
-- bounded action cost
-
-If confidence is too low or every candidate fails, the result is **no action**. The controller can re-observe or enter recovery instead.
-
-### 3. Runtime Health Monitor
-
-`minecraft/v30_health.py`
-
-Tracks:
-
-- loop lag
-- consecutive failures
-- time since last verified result
-
-An unhealthy runtime can be stopped or routed into recovery by the higher-level controller.
-
-### 4. Deterministic Benchmark Harness
-
-`minecraft/v30_benchmark.py`
-
-Decision changes can now be measured using controlled benchmark cases before they are trusted in real Minecraft sessions.
-
-Each case contains:
+Qynl now has explicit states:
 
 ```text
-Observation
-Candidate actions
-Expected decision
+BOOT → OBSERVE → THINK → ACT → VERIFY
+                    ↑             ↓
+                    └── RECOVER ──┘
+
+PAUSED / COMPLETE / ABORTED
 ```
 
-The benchmark reports per-case results and an overall score.
+Invalid state transitions are rejected instead of silently accepted.
 
-### 5. V30 tests
+### 2. Event-driven runtime
 
-`evals/test_v30.py` covers:
+`minecraft/v50_event_bus.py`
 
-- low-confidence rejection
-- risky-action rejection
-- bounded utility selection
-- stale-verification health detection
-- benchmark scoring
-
-## Architecture
+A bounded deterministic event bus lets components communicate through explicit events such as:
 
 ```text
-                    MISSION CONTROL
-                          │
-                    GOAL / SUBTASK
-                          │
-                    WORLD MODEL
-                          │
-                    PERCEPTION
-                          │
-                 CANDIDATE GENERATION
-                          │
-                    DECISION GATE
-                     /          \\
-                  ACT             STOP
-                   │                │
-             GUARDED EXECUTOR   REOBSERVE
-                   │
-                MINECRAFT
-                   │
-               VERIFICATION
-                   │
-          ┌────────┴─────────┐
-          │                  │
-       LEARNING           HEALTH
-          │                  │
-          └────────┬─────────┘
-                   ↓
-                REPLAN
+runtime.started
+observation.updated
+mission.started
+action.proposed
+action.rejected
+action.executed
+action.verified
+mission.completed
+runtime.emergency_stop
 ```
 
-## Safety boundary
+### 3. Temporal observation buffer
+
+`minecraft/v50_observation_buffer.py`
+
+Qynl now retains a bounded sequence of recent observations with:
+
+- frame ID
+- interpreted state
+- confidence
+- timestamp
+
+This gives the higher-level system temporal context rather than forcing every decision to depend on one screenshot.
+
+### 4. Bounded typed memory
+
+`minecraft/v50_memory_store.py`
+
+Memory is explicitly namespaced and bounded. Entries contain a key, value, confidence and timestamp.
+
+Example namespaces:
 
 ```text
-Model / memory / learning
-            ↓
-      Candidate actions
-            ↓
-       Decision Gate
-            ↓
-        ActionPolicy
-            ↓
-       Rate Limiter
-            ↓
-        Watchdog
-            ↓
-     Guarded Executor
-            ↓
-        Force ESC
-            ↓
-         Minecraft
+world
+mission
+skill
+session
 ```
 
-Learning, mission memory and recovery are **not execution authorities**.
+The memory layer is deliberately replaceable. It is storage, not a magical second brain.
 
-V30 does not introduce unrestricted shell access, arbitrary OS commands or credential access.
+### 5. Mission engine
+
+`minecraft/v50_mission_engine.py`
+
+Missions now have a deterministic lifecycle and explicit subtask progress.
+
+Example:
+
+```text
+Mission: survive first night
+
+[✓] collect wood
+[✓] craft tools
+[ ] find food
+[ ] build shelter
+[ ] survive night
+```
+
+### 6. Independent safety supervisor
+
+`minecraft/v50_safety_supervisor.py`
+
+Safety is separated from planning.
+
+The supervisor can reject actions because of:
+
+- emergency stop
+- action-duration limits
+- stale state
+- low confidence
+- repeated verification failures
+
+Repeated failures can force an emergency stop.
+
+The model cannot override the supervisor.
+
+### 7. Integrated runtime
+
+`minecraft/v50_runtime.py` connects the state machine, event bus, observation buffer and safety supervisor and provides an explicit emergency-stop path.
+
+### 8. System integration tests
+
+`evals/test_v50.py` covers:
+
+- invalid state transitions
+- event dispatch
+- bounded memory
+- mission completion
+- safety failure budgets
+- bounded observations
+- integrated emergency stop
+
+## V50 control loop
+
+```text
+┌──────────────────────┐
+│      OBSERVE         │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│  UPDATE WORLD STATE  │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│  CHECK MISSION       │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│  PLAN NEXT ACTION    │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│  SAFETY SUPERVISOR   │──── reject ───→ REOBSERVE / RECOVER
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│  EXECUTE ONE ACTION  │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│  VERIFY RESULT       │
+└───────┬────────┬─────┘
+        │        │
+     success   failure
+        │        │
+        ↓        ↓
+     LEARN    RECOVER
+        │        │
+        └───┬────┘
+            ↓
+          REPLAN
+```
 
 ## Serious real-session workflow
 
@@ -168,7 +204,7 @@ cd AgentQynl
 
 Or download the repository ZIP from GitHub.
 
-### 2. Install prerequisites
+### 2. Install
 
 At minimum:
 
@@ -194,13 +230,13 @@ npm install
 cd ../..
 ```
 
-Follow the dependency files in the repository if they specify different commands.
+Follow repository dependency files if they specify different commands.
 
-### 3. Configure the provider
+### 3. Configure provider
 
 Keep credentials in environment configuration. Never hard-code or commit API keys.
 
-Start safely with dry-run enabled:
+Start with:
 
 ```text
 QYNL_DRY_RUN=1
@@ -208,41 +244,34 @@ QYNL_DRY_RUN=1
 
 ### 4. Start Minecraft
 
-Use a **dedicated test world**. Do not use a valuable survival world for initial autonomous sessions. Humanity invented civilization and then taught a computer to punch trees. It deserves a sandbox.
+Use a dedicated test world. Humanity invented civilization and then taught a computer to punch trees, so give it a sandbox.
 
-### 5. Run benchmarks
-
-Run the deterministic V30 decision tests before changing the real gameplay configuration.
-
-### 6. Dry-run
+### 5. Dry-run verification
 
 Verify:
 
-- screen capture
-- visual perception
+- capture
+- perception
+- temporal observations
 - world model
 - goals/subtasks
 - planning
-- decision gate
-- verification
+- V31 action validation
+- V30 decision gate
 - V23 learning
-- V26 mission control
-- recovery
+- V26 missions
+- V24 runtime
+- V50 safety supervisor
 - Force ESC
 - watchdog
-- V30 health state
 
 No real input should execute in dry-run mode.
 
-### 7. Real mission
+### 6. First real mission
 
-Only after the above checks pass:
+Only after the safety checks pass, enable real input using the configuration supported by the current runtime.
 
-```text
-QYNL_DRY_RUN=0
-```
-
-Start with objectively verifiable missions:
+Start with objectively verifiable goals:
 
 ```text
 Collect 16 logs
@@ -251,30 +280,32 @@ Build a shelter
 Reach a specified location
 ```
 
-Avoid vague objectives such as `play Minecraft well`.
+Do not begin with an undefined objective like `play Minecraft well`.
 
-### 8. Monitor
+### 7. Monitor
 
-During early real sessions, monitor:
+During early real sessions monitor:
 
 ```text
 Mission status
 Progress
 Current subtask
+Current state
 Current decision
 Current action
 Verification result
-Decision confidence
-Health
+Confidence
+Safety state
 Recovery state
 Learning events
+Runtime health
 ```
 
 Keep early real sessions supervised.
 
 ## Desktop App
 
-The TSX desktop app is intended to be the main operator interface when the current build supports the required backend controls.
+The TSX desktop application is intended to be the operator interface when the current build supports the required backend controls.
 
 Typical development startup:
 
@@ -284,7 +315,7 @@ npm install
 npm run dev
 ```
 
-Use the scripts actually defined in `apps/desktop/package.json` if they differ.
+Use the scripts defined by `apps/desktop/package.json` if they differ.
 
 Recommended workflow:
 
@@ -299,7 +330,7 @@ Safety check
  ↓
 DRY RUN
  ↓
-Run benchmarks
+Run tests / benchmarks
  ↓
 Observe
  ↓
@@ -307,22 +338,12 @@ Create mission
  ↓
 Start
  ↓
-Monitor health + decisions
+Monitor runtime
  ↓
-Pause / Abort / Force ESC when necessary
+Pause / Abort / Force ESC
  ↓
 Review mission result
 ```
-
-Recommended initial settings:
-
-- **Dry Run:** ON
-- **Watchdog:** ON
-- **Force ESC:** ON and tested
-- **Action Rate:** conservative
-- **Recovery:** ON
-- **Bounded Memory:** ON
-- **Simple verified mission:** ON
 
 ## Version evolution
 
@@ -345,9 +366,13 @@ V23  Verified learning + capability + progressive curriculum
  ↓
 V24  Real-time runtime + guarded execution + telemetry
  ↓
-V26  Long-running missions + structured mission memory + deterministic recovery
+V26  Long-running missions + structured mission memory + recovery
  ↓
 V30  Typed contracts + decision gate + health + deterministic benchmarks
+ ↓
+V31  Strict actions + state freshness + execution validation
+ ↓
+V50  Unified runtime architecture + mission + memory + eventing + safety supervisor
 ```
 
 ## Project structure
@@ -386,6 +411,16 @@ AgentQynl/
 │   ├── v30_decision_gate.py
 │   ├── v30_health.py
 │   ├── v30_benchmark.py
+│   ├── v31_action_schema.py
+│   ├── v31_state_estimator.py
+│   ├── v31_action_validator.py
+│   ├── v50_event_bus.py
+│   ├── v50_agent_state.py
+│   ├── v50_memory_store.py
+│   ├── v50_mission_engine.py
+│   ├── v50_safety_supervisor.py
+│   ├── v50_observation_buffer.py
+│   ├── v50_runtime.py
 │   ├── executor.py
 │   └── input_adapter.py
 ├── memory/
@@ -396,12 +431,13 @@ AgentQynl/
     ├── V23.md
     ├── V24.md
     ├── V26.md
-    └── V30.md
+    ├── V30.md
+    └── V50.md
 ```
 
 ## Testing philosophy
 
-V30 changes the development loop from:
+V50 changes the development loop from:
 
 ```text
 add feature → hope
@@ -412,28 +448,54 @@ to:
 ```text
 change
  ↓
-benchmark
+unit tests
  ↓
-test
+deterministic benchmarks
  ↓
 dry-run
  ↓
 short real mission
  ↓
-measure failure
+measure failures
  ↓
 fix
  ↓
 repeat
 ```
 
-The deterministic benchmark is not a substitute for real Minecraft evaluation. It is a fast regression barrier that catches obvious decision-quality regressions before they reach live sessions.
+The benchmark suite is not a substitute for real Minecraft evaluation. It is a fast regression barrier.
+
+## Safety boundary
+
+```text
+Model / memory / learning
+            ↓
+      Candidate decision
+            ↓
+      Typed Minecraft Action
+            ↓
+  State freshness / confidence
+            ↓
+   Independent Supervisor
+            ↓
+      Rate Limiter
+            ↓
+        Watchdog
+            ↓
+       Guarded Executor
+            ↓
+        Force ESC
+            ↓
+         Minecraft
+```
+
+Learning, memory and missions are **not execution authorities**.
 
 ## Limitations
 
-V30 is a major reliability/evaluation architecture update, not proof that Qynl can already solve arbitrary Minecraft tasks flawlessly. Real reliability still depends on the actual vision model, Minecraft input adapter, model latency, verification quality and environment.
+V50 is a major architecture foundation, not proof of perfect autonomous Minecraft gameplay. Real reliability still depends on perception, model quality, latency, input handling, verification and the Minecraft environment.
 
-The important change is that more of those failures can now be represented explicitly and measured rather than hidden inside an endless action loop.
+The purpose of V50 is to make those failures explicit, bounded, testable and much easier to improve systematically.
 
 ## License
 
