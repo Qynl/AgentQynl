@@ -1,27 +1,23 @@
-# Qynl Agent V15
+# Qynl Agent V16
 
-Qynl is a **Minecraft-only AI agent with temporal perception, hierarchical tasks, explicit goal evaluation, episodic skill memory and a reliability-controlled runtime**.
+Qynl is a **Minecraft-only AI agent with temporal perception, hierarchical tasks, explicit goal evaluation, episodic skill memory, reliability controls and bounded recovery**.
 
-## V15: reliable agent loop
+## V16: recovery + adaptive control
 
-V15 builds on V14 by giving the different agent layers one bounded shared control state and adding independent runtime safeguards plus explicit action verification.
+V16 builds on V15 by adding a dedicated recovery layer. The agent can detect common failure patterns and choose a bounded recovery strategy instead of blindly repeating the same behavior.
 
 ```text
 User goal
    ↓
 Task / Subtask
    ↓
-┌─────────────────────────┐
-│     V15 Blackboard      │
-│ goal / state / mode /   │
-│ failures / evaluation   │
-└─────────────────────────┘
+Shared Blackboard
    ↓
-Temporal perception + skill memory
+Temporal state + Adaptive Memory
    ↓
 Planner
    ↓
-Strict action parser
+Rate Limiter
    ↓
 Runtime Watchdog
    ↓
@@ -29,99 +25,110 @@ ActionPolicy
    ↓
 Force ESC
    ↓
-Minecraft executor
+Minecraft
    ↓
-Post-action perception
+Post-action verification
    ↓
-Action Verifier
-   ↓
-Goal Evaluator
-   ↓
-Skill Memory + Blackboard
-   ↓
-next action / subtask / recovery
+Progress?
+ ┌──┴──┐
+YES   NO
+ ↓     ↓
+next  Recovery Manager
+       ↓
+ reobserve / look around /
+ reposition / change action /
+ abort
+       ↓
+    Planner
 ```
 
-## V15 improvements
+## V16 improvements
 
-- 🧠 **Shared Blackboard** for consistent cross-layer state
-- 🛡️ **Runtime Watchdog** independent of the model
-- ⏱️ **Action duration limits**
-- 🔢 **Consecutive failure budget**
-- ⌛ **Per-step time budget**
-- 🔎 **Dedicated action verification** using pre/post observations
-- 🔄 **Observable-change scoring**
-- 🧪 V15 reliability tests
-- 📚 Complete V15 documentation
+- 🧭 **Bounded Recovery Manager**
+- 🔎 **Failure diagnosis** using repeated state/action and confidence
+- 🔁 **Anti-loop recovery**
+- 👁️ **Re-observation recovery** for uncertain perception
+- 🧭 **Look-around recovery** for unchanged scenes
+- 🚶 **Reposition recovery** after failed actions
+- 🛑 **Recovery budget** with explicit abort
+- 🧠 **Positive + negative adaptive memory**
+- ⏱️ **Action rate limiter**
+- 🧪 V16 recovery/memory/rate-limit tests
+- 📚 Complete V16 documentation
 
-## Shared Blackboard
+## Recovery Manager
 
-`minecraft/v15_blackboard.py` provides one bounded source of truth for:
+`minecraft/v16_recovery.py` handles the question:
+
+> What should Qynl do when the current approach stops working?
+
+It considers:
+
+- repeated visual state
+- repeated action pattern
+- low perception confidence
+- recent failures
+
+Possible modes:
 
 ```text
-goal
-active subtask
-success hint
-current state
-latest delta
-last action
-last evaluation
-strategy mode
-recent failures
-events
+reobserve
+look_around
+reposition
+change_action
+abort
 ```
 
-This prevents the planner, evaluator and recovery system from maintaining unrelated versions of what Qynl currently believes is happening.
+The priority is conservative. Low confidence causes re-observation first. Repeated actions trigger a change of approach. Repeated unchanged states trigger exploration. Too many failures eventually cause an abort instead of an infinite loop.
 
-All histories are bounded.
+## Adaptive memory
 
-## Runtime Watchdog
+`minecraft/v16_memory.py` stores both successful and unsuccessful lessons.
 
-`minecraft/v15_watchdog.py` provides runtime limits that the model cannot override.
-
-It can reject:
-
-- an action exceeding the configured duration
-- further actions after too many consecutive failures
-- a step exceeding its time budget
-
-This is deliberately separate from the model's reasoning.
-
-The model can propose **what might help**. The runtime decides whether the proposal is allowed to execute.
-
-## Action verification
-
-`minecraft/v15_action_verifier.py` compares the temporal state before and after an action.
-
-It checks for observable changes involving:
-
-- entities
-- landmarks
-- hazards
-- UI
-- overall state
-
-This is an action-effect signal, not proof that the complete Minecraft goal succeeded. The V14 goal evaluator remains the authority for subtask success.
-
-## V14 → V15
-
-V14 added:
-
-- hierarchical task decomposition
-- explicit goal evaluation
-- episodic skill memory
-
-V15 adds the reliability layer:
+Example:
 
 ```text
-V14
-Task → Plan → Action → Evaluate → Remember
-
-V15
-Task → Shared State → Plan → Watchdog → Action → Verify → Evaluate → Remember → Shared State
+Goal: find village
+Situation: plains
+Lesson: do not keep walking in the same direction
+Reward: -1
 ```
 
-That makes failures and state changes available consistently to the next decision instead of being scattered across independent components.
+Negative experiences are useful because they can tell the planner what **not** to repeat.
+
+Memory retrieval remains bounded and retrieval-based. V16 does not secretly modify model weights during gameplay.
+
+## Action rate limiting
+
+`minecraft/v16_rate_limiter.py` enforces a minimum interval between actions. This provides another runtime boundary against accidental action bursts.
+
+## V15 → V16
+
+V15 answered:
+
+```text
+Is this action bounded and did the world change?
+```
+
+V16 adds:
+
+```text
+If it didn't work, WHY might it have failed?
+What is the safest useful recovery?
+Should we observe again, move, change the action, or stop?
+```
+
+The resulting loop is:
+
+```text
+Act → Verify → Diagnose → Recover → Act
+```
+
+instead of:
+
+```text
+Act → Fail → Repeat → Fail → Repeat forever
+```
 
 ## Safety chain
 
@@ -130,6 +137,8 @@ Model output
     ↓
 Strict Minecraft parser
     ↓
+Action Rate Limiter
+    ↓
 Runtime Watchdog
     ↓
 ActionPolicy
@@ -139,15 +148,15 @@ Force ESC
 Minecraft executor
 ```
 
-No shell access, arbitrary desktop automation, process creation, credentials or unrestricted computer control is introduced.
+Recovery decisions cannot execute OS commands or bypass Force ESC.
 
 ## Minecraft-only boundary
 
-The agent is limited to Minecraft-focused visual state, goals, bounded memory and Minecraft actions.
+The agent is limited to Minecraft-focused visual state, goals, bounded memory and Minecraft actions. No shell access, arbitrary desktop automation, credentials or unrestricted computer control is introduced.
 
 ## Real gameplay
 
-V15 retains the existing real-input runtime. Real input remains opt-in with `QYNL_DRY_RUN=0`.
+V16 retains the existing real-input runtime. Real input remains opt-in with `QYNL_DRY_RUN=0`.
 
 Use a dedicated Minecraft test world and verify Force ESC before enabling real input.
 
@@ -178,28 +187,32 @@ AgentQynl/
 │   ├── v15_blackboard.py
 │   ├── v15_watchdog.py
 │   ├── v15_action_verifier.py
+│   ├── v16_recovery.py
+│   ├── v16_memory.py
+│   ├── v16_rate_limiter.py
 │   ├── executor.py
 │   └── input_adapter.py
 ├── memory/
 ├── safety/
 ├── evals/
 └── docs/
-    └── V15.md
+    └── V16.md
 ```
 
 ## Tests
 
-V15 adds tests for:
+V16 adds tests for:
 
-- bounded blackboard history
-- action duration limits
-- action verification
+- low-confidence recovery
+- recovery budget exhaustion
+- negative-memory retrieval
+- action rate limiting
 
 Run the complete test suite before real-input testing.
 
 ## Limitations
 
-V15 improves runtime coordination and reliability. It does not make visual perception infallible or guarantee that an observable change means a task succeeded. Actual gameplay quality still depends on the selected models, capture quality, latency, Minecraft version/UI and task complexity.
+V16 improves failure handling and adaptive control but does not guarantee that its diagnosis is correct. Recovery is deliberately bounded and conservative. Actual Minecraft performance still depends on perception, planning models, latency, Minecraft version/UI and task complexity.
 
 ## License
 
