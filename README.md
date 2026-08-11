@@ -1,6 +1,6 @@
-# Qynl Agent V26
+# Qynl Agent V30
 
-Qynl is a **Minecraft-only autonomous AI agent** with visual perception, hierarchical planning, persistent world state, verified learning, real-time runtime controls, mission-level autonomy and bounded recovery.
+Qynl is a **Minecraft-only autonomous AI agent** with visual perception, hierarchical planning, persistent world state, verified learning, real-time runtime controls, mission-level autonomy, bounded recovery, decision gating, runtime health monitoring and deterministic evaluation.
 
 ## License / Ownership
 
@@ -8,80 +8,154 @@ Qynl is a **Minecraft-only autonomous AI agent** with visual perception, hierarc
 
 See [`LICENSE`](LICENSE). Third-party dependencies remain under their own licenses.
 
-## V26: Long-Running Mission Autonomy
+## V30: Reliability + Evaluation
 
-V26 is about making Qynl behave like one coherent agent across an entire Minecraft mission rather than a sequence of disconnected actions.
+V30 is the major engineering update that turns Qynl from a growing collection of agent modules into a more measurable control system.
 
 ```text
-MISSION
-  ↓
-OBJECTIVE
-  ↓
-SUBTASKS
-  ↓
-WORLD MODEL + MEMORY
-  ↓
-PLAN
-  ↓
-ONE BOUNDED ACTION
-  ↓
+OBSERVE
+   ↓
+UNDERSTAND
+   ↓
+GENERATE CANDIDATES
+   ↓
+DECISION GATE
+   ↓
+EXECUTE ONE BOUNDED ACTION
+   ↓
 VERIFY
-  ↓
-UPDATE PROGRESS
-  ↓
-LEARN VERIFIED LESSON
-  ↓
-CONTINUE / RECOVER / REPLAN
-  ↓
-MISSION RESULT
+   ↓
+HEALTH CHECK
+   ↓
+LEARN / REPLAN
 ```
 
-### Mission Control
+The key rule is simple: **learning and planning can suggest actions, but neither can bypass the safety/execution boundary.**
 
-`minecraft/v26_mission_control.py` adds an explicit mission state machine:
+## What V30 adds
 
-- `IDLE`
-- `RUNNING`
-- `PAUSED`
-- `COMPLETED`
-- `FAILED`
-- `ABORTED`
+### 1. Typed agent contracts
 
-Missions have a progress value, blockers and a maximum runtime. A mission that exceeds its runtime budget fails instead of continuing forever.
+`minecraft/v30_contracts.py`
 
-Operators can pause or abort a mission without giving the planner unrestricted control.
+Introduces explicit representations for:
 
-### Mission Memory
+- observations
+- confidence bands
+- candidate actions
+- decisions
+- verification results
 
-`minecraft/v26_mission_memory.py` stores compact **verified** mission results:
+This reduces implicit state passing between perception, planning, execution and evaluation.
 
-- mission identifier
-- outcome
-- verified status
-- bounded reward
-- short lesson
+### 2. Uncertainty-aware Decision Gate
 
-Unverified results are discarded. Memory size and lesson length are bounded.
+`minecraft/v30_decision_gate.py`
 
-### Deterministic Recovery
+Before selecting an action, V30 checks:
 
-`minecraft/v26_recovery.py` provides a bounded recovery ladder for uncertainty and stalls:
+- observation confidence
+- action risk
+- expected progress
+- bounded action cost
+
+If confidence is too low or every candidate fails, the result is **no action**. The controller can re-observe or enter recovery instead.
+
+### 3. Runtime Health Monitor
+
+`minecraft/v30_health.py`
+
+Tracks:
+
+- loop lag
+- consecutive failures
+- time since last verified result
+
+An unhealthy runtime can be stopped or routed into recovery by the higher-level controller.
+
+### 4. Deterministic Benchmark Harness
+
+`minecraft/v30_benchmark.py`
+
+Decision changes can now be measured using controlled benchmark cases before they are trusted in real Minecraft sessions.
+
+Each case contains:
 
 ```text
-REOBSERVE
-   ↓
-RELOCALIZE
-   ↓
-REPLAN
-   ↓
-BACKTRACK
-   ↓
-PAUSE
-   ↓
-ABORT
+Observation
+Candidate actions
+Expected decision
 ```
 
-The recovery budget prevents endless loops. When recovery is exhausted, the mission aborts.
+The benchmark reports per-case results and an overall score.
+
+### 5. V30 tests
+
+`evals/test_v30.py` covers:
+
+- low-confidence rejection
+- risky-action rejection
+- bounded utility selection
+- stale-verification health detection
+- benchmark scoring
+
+## Architecture
+
+```text
+                    MISSION CONTROL
+                          │
+                    GOAL / SUBTASK
+                          │
+                    WORLD MODEL
+                          │
+                    PERCEPTION
+                          │
+                 CANDIDATE GENERATION
+                          │
+                    DECISION GATE
+                     /          \\
+                  ACT             STOP
+                   │                │
+             GUARDED EXECUTOR   REOBSERVE
+                   │
+                MINECRAFT
+                   │
+               VERIFICATION
+                   │
+          ┌────────┴─────────┐
+          │                  │
+       LEARNING           HEALTH
+          │                  │
+          └────────┬─────────┘
+                   ↓
+                REPLAN
+```
+
+## Safety boundary
+
+```text
+Model / memory / learning
+            ↓
+      Candidate actions
+            ↓
+       Decision Gate
+            ↓
+        ActionPolicy
+            ↓
+       Rate Limiter
+            ↓
+        Watchdog
+            ↓
+     Guarded Executor
+            ↓
+        Force ESC
+            ↓
+         Minecraft
+```
+
+Learning, mission memory and recovery are **not execution authorities**.
+
+V30 does not introduce unrestricted shell access, arbitrary OS commands or credential access.
 
 ## Serious real-session workflow
 
@@ -102,7 +176,7 @@ At minimum:
 - Node.js + npm for the TSX desktop app
 - Minecraft Java Edition
 - Git if cloning
-- the Minecraft version/configuration supported by this repository
+- the Minecraft version/configuration supported by the repository
 
 ```bash
 python -m venv .venv
@@ -120,13 +194,13 @@ npm install
 cd ../..
 ```
 
-Follow the actual dependency files in the repository if they specify different commands.
+Follow the dependency files in the repository if they specify different commands.
 
 ### 3. Configure the provider
 
-Keep provider credentials in environment configuration. Never hard-code or commit API keys.
+Keep credentials in environment configuration. Never hard-code or commit API keys.
 
-Start safely:
+Start safely with dry-run enabled:
 
 ```text
 QYNL_DRY_RUN=1
@@ -134,9 +208,13 @@ QYNL_DRY_RUN=1
 
 ### 4. Start Minecraft
 
-Use a **dedicated test world**. Do not use a valuable survival world for the first autonomous sessions. Humans spent thousands of years inventing civilization, and then we gave the computer permission to punch trees.
+Use a **dedicated test world**. Do not use a valuable survival world for initial autonomous sessions. Humanity invented civilization and then taught a computer to punch trees. It deserves a sandbox.
 
-### 5. Dry-run first
+### 5. Run benchmarks
+
+Run the deterministic V30 decision tests before changing the real gameplay configuration.
+
+### 6. Dry-run
 
 Verify:
 
@@ -145,24 +223,26 @@ Verify:
 - world model
 - goals/subtasks
 - planning
+- decision gate
 - verification
 - V23 learning
 - V26 mission control
 - recovery
 - Force ESC
 - watchdog
+- V30 health state
 
 No real input should execute in dry-run mode.
 
-### 6. Run a real mission
+### 7. Real mission
 
-Only after the dry-run checks pass:
+Only after the above checks pass:
 
 ```text
 QYNL_DRY_RUN=0
 ```
 
-Start with an objectively verifiable mission:
+Start with objectively verifiable missions:
 
 ```text
 Collect 16 logs
@@ -171,20 +251,22 @@ Build a shelter
 Reach a specified location
 ```
 
-Avoid vague objectives such as `play Minecraft well`. A machine cannot reliably verify something humans themselves argue about on Reddit for six hours.
+Avoid vague objectives such as `play Minecraft well`.
 
-### 7. Monitor the mission
+### 8. Monitor
 
-The runtime should continuously provide:
+During early real sessions, monitor:
 
 ```text
 Mission status
 Progress
 Current subtask
+Current decision
 Current action
 Verification result
+Decision confidence
+Health
 Recovery state
-Runtime health
 Learning events
 ```
 
@@ -192,7 +274,7 @@ Keep early real sessions supervised.
 
 ## Desktop App
 
-The TSX desktop app is intended to be the main operator interface.
+The TSX desktop app is intended to be the main operator interface when the current build supports the required backend controls.
 
 Typical development startup:
 
@@ -217,13 +299,15 @@ Safety check
  ↓
 DRY RUN
  ↓
+Run benchmarks
+ ↓
 Observe
  ↓
 Create mission
  ↓
 Start
  ↓
-Monitor
+Monitor health + decisions
  ↓
 Pause / Abort / Force ESC when necessary
  ↓
@@ -240,55 +324,7 @@ Recommended initial settings:
 - **Bounded Memory:** ON
 - **Simple verified mission:** ON
 
-## Architecture
-
-```text
-                   ┌──────────────────┐
-                   │  Mission Control │
-                   └────────┬─────────┘
-                            ↓
-                    Goal / Subtasks
-                            ↓
-              ┌─────────────┴─────────────┐
-              ↓                           ↓
-        World Model                  Mission Memory
-              ↓                           ↑
-         Perception                      │
-              ↓                           │
-       Planner / Predictor               │
-              ↓                           │
-        Action Policy                    │
-              ↓                           │
-       Guarded Executor                  │
-              ↓                           │
-          Minecraft ─────→ Verification ─┘
-              ↑                 ↓
-              └──── Recovery / Replan
-```
-
-## Safety boundary
-
-```text
-Mission / planner / learned lesson
-             ↓
-        ActionPolicy
-             ↓
-        Rate Limiter
-             ↓
-         Watchdog
-             ↓
-      Guarded Executor
-             ↓
-         Force ESC
-             ↓
-         Minecraft
-```
-
-Learning, mission memory and recovery are **not execution authorities**.
-
-V26 does not introduce unrestricted shell access, arbitrary OS commands or credential access.
-
-## Version history
+## Version evolution
 
 ```text
 V13  Temporal awareness
@@ -310,6 +346,8 @@ V23  Verified learning + capability + progressive curriculum
 V24  Real-time runtime + guarded execution + telemetry
  ↓
 V26  Long-running missions + structured mission memory + deterministic recovery
+ ↓
+V30  Typed contracts + decision gate + health + deterministic benchmarks
 ```
 
 ## Project structure
@@ -344,6 +382,10 @@ AgentQynl/
 │   ├── v26_mission_control.py
 │   ├── v26_mission_memory.py
 │   ├── v26_recovery.py
+│   ├── v30_contracts.py
+│   ├── v30_decision_gate.py
+│   ├── v30_health.py
+│   ├── v30_benchmark.py
 │   ├── executor.py
 │   └── input_adapter.py
 ├── memory/
@@ -353,26 +395,45 @@ AgentQynl/
     ├── V22.md
     ├── V23.md
     ├── V24.md
-    └── V26.md
+    ├── V26.md
+    └── V30.md
 ```
 
-## Tests
+## Testing philosophy
 
-V26 adds tests for:
+V30 changes the development loop from:
 
-- mission lifecycle
-- completion state
-- ignoring unverified mission results
-- deterministic recovery escalation
-- recovery abort behavior
+```text
+add feature → hope
+```
 
-Run the full test suite before real-input testing.
+to:
 
-## What V26 does not claim
+```text
+change
+ ↓
+benchmark
+ ↓
+test
+ ↓
+dry-run
+ ↓
+short real mission
+ ↓
+measure failure
+ ↓
+fix
+ ↓
+repeat
+```
 
-V26 is a serious autonomy architecture update, not proof that Qynl can already complete arbitrary Minecraft missions flawlessly. Reliability still depends on the complete perception, model, planning, input and verification stack.
+The deterministic benchmark is not a substitute for real Minecraft evaluation. It is a fast regression barrier that catches obvious decision-quality regressions before they reach live sessions.
 
-The important change is that long-running failures are now represented explicitly, bounded, recoverable and measurable instead of being hidden inside an endless action loop.
+## Limitations
+
+V30 is a major reliability/evaluation architecture update, not proof that Qynl can already solve arbitrary Minecraft tasks flawlessly. Real reliability still depends on the actual vision model, Minecraft input adapter, model latency, verification quality and environment.
+
+The important change is that more of those failures can now be represented explicitly and measured rather than hidden inside an endless action loop.
 
 ## License
 
