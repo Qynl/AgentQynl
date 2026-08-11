@@ -1,133 +1,144 @@
-# Qynl Agent V16
+# Qynl Agent V20
 
-Qynl is a **Minecraft-only AI agent with temporal perception, hierarchical tasks, explicit goal evaluation, episodic skill memory, reliability controls and bounded recovery**.
+Qynl is a **Minecraft-only AI agent with temporal perception, hierarchical tasks, explicit goal evaluation, episodic skill memory, recovery, a persistent world model and utility-based planning**.
 
-## V16: recovery + adaptive control
+## V20: World Model + Utility Planning
 
-V16 builds on V15 by adding a dedicated recovery layer. The agent can detect common failure patterns and choose a bounded recovery strategy instead of blindly repeating the same behavior.
+V20 is a major architecture update. Instead of treating each screenshot as an isolated decision, Qynl now maintains a compact structured world model and ranks multiple bounded action candidates before execution.
 
 ```text
-User goal
-   ↓
-Task / Subtask
-   ↓
-Shared Blackboard
-   ↓
-Temporal state + Adaptive Memory
-   ↓
-Planner
-   ↓
+Minecraft screen
+      ↓
+Vision observation
+      ↓
+Persistent World Model
+      ↓
+Goal + relevant memory
+      ↓
+Utility Planner
+      ↓
+Candidate actions
+      ↓
 Rate Limiter
-   ↓
+      ↓
 Runtime Watchdog
-   ↓
+      ↓
 ActionPolicy
-   ↓
+      ↓
 Force ESC
-   ↓
+      ↓
 Minecraft
-   ↓
-Post-action verification
-   ↓
-Progress?
- ┌──┴──┐
-YES   NO
- ↓     ↓
-next  Recovery Manager
-       ↓
- reobserve / look around /
- reposition / change action /
- abort
-       ↓
-    Planner
+      ↓
+Post-action observation
+      ↓
+Verification / Recovery
+      ↓
+World Model update
 ```
 
-## V16 improvements
+## V20 improvements
 
-- 🧭 **Bounded Recovery Manager**
-- 🔎 **Failure diagnosis** using repeated state/action and confidence
-- 🔁 **Anti-loop recovery**
-- 👁️ **Re-observation recovery** for uncertain perception
-- 🧭 **Look-around recovery** for unchanged scenes
-- 🚶 **Reposition recovery** after failed actions
-- 🛑 **Recovery budget** with explicit abort
-- 🧠 **Positive + negative adaptive memory**
-- ⏱️ **Action rate limiter**
-- 🧪 V16 recovery/memory/rate-limit tests
-- 📚 Complete V16 documentation
+- 🌍 **Persistent Minecraft World Model**
+- 🧍 **Tracked observed entities** with confidence and coarse position hints
+- 🗺️ **Persistent landmarks, hazards and UI state**
+- 📝 **Recent world events**
+- 🎯 **Utility-based candidate planning**
+- 🔀 **Multiple candidate actions instead of one-shot planning**
+- 🧠 **Relevant memory integrated into planning**
+- 🔒 **Every candidate still passes the complete safety pipeline**
+- 🔄 **Integrated closed-loop orchestrator**
+- 🧪 V20 world-model/planner tests
+- 📚 Complete V20 documentation
 
-## Recovery Manager
+## Persistent World Model
 
-`minecraft/v16_recovery.py` handles the question:
+`minecraft/v20_world_model.py` provides `WorldModel`.
 
-> What should Qynl do when the current approach stops working?
-
-It considers:
-
-- repeated visual state
-- repeated action pattern
-- low perception confidence
-- recent failures
-
-Possible modes:
+It stores only observed evidence:
 
 ```text
-reobserve
-look_around
-reposition
-change_action
-abort
+entities / objects
+confidence
+coarse position hints
+landmarks
+hazards
+visible UI
+recent events
 ```
 
-The priority is conservative. Low confidence causes re-observation first. Repeated actions trigger a change of approach. Repeated unchanged states trigger exploration. Too many failures eventually cause an abort instead of an infinite loop.
+It is deliberately **not** an invented 3D map. If Qynl has not observed something, the world model does not pretend to know it.
 
-## Adaptive memory
+## Utility Planner
 
-`minecraft/v16_memory.py` stores both successful and unsuccessful lessons.
-
-Example:
+`minecraft/v20_planner.py` changes planning from:
 
 ```text
-Goal: find village
-Situation: plains
-Lesson: do not keep walking in the same direction
-Reward: -1
+"give me one action"
 ```
 
-Negative experiences are useful because they can tell the planner what **not** to repeat.
-
-Memory retrieval remains bounded and retrieval-based. V16 does not secretly modify model weights during gameplay.
-
-## Action rate limiting
-
-`minecraft/v16_rate_limiter.py` enforces a minimum interval between actions. This provides another runtime boundary against accidental action bursts.
-
-## V15 → V16
-
-V15 answered:
+to:
 
 ```text
-Is this action bounded and did the world change?
+"give me a small set of possible actions and rank them"
 ```
 
-V16 adds:
+Candidates are scored using model-estimated utility based on expected progress, observability, risk, recovery mode and relevant memory.
+
+The score does **not** grant execution authority. Every candidate is independently validated by the runtime.
+
+## Integrated V20 loop
+
+`minecraft/v20_loop.py` orchestrates the major components:
+
+1. Force ESC checkpoint
+2. Minecraft capture
+3. Vision observation
+4. World-model update
+5. Memory retrieval
+6. Candidate generation/ranking
+7. Rate limiting
+8. Runtime watchdog
+9. ActionPolicy validation
+10. Force ESC checkpoint
+11. One Minecraft action
+12. Post-action observation and existing verification/recovery flow
+
+Invalid or rejected candidates are discarded.
+
+## Evolution
 
 ```text
-If it didn't work, WHY might it have failed?
-What is the safest useful recovery?
-Should we observe again, move, change the action, or stop?
+V13  Temporal awareness
+ ↓
+V14  Tasks + evaluation + skill memory
+ ↓
+V15  Shared state + watchdog + verification
+ ↓
+V16  Recovery + adaptive memory + rate limiting
+ ↓
+V20  Persistent world model + utility planning + integrated loop
 ```
 
-The resulting loop is:
+The architecture is now centered around:
 
 ```text
-Act → Verify → Diagnose → Recover → Act
-```
-
-instead of:
-
-```text
-Act → Fail → Repeat → Fail → Repeat forever
+OBSERVE
+  ↓
+MODEL THE WORLD
+  ↓
+REMEMBER RELEVANT EXPERIENCE
+  ↓
+GENERATE OPTIONS
+  ↓
+RANK OPTIONS
+  ↓
+VALIDATE
+  ↓
+ACT
+  ↓
+OBSERVE AGAIN
+  ↓
+VERIFY / RECOVER
 ```
 
 ## Safety chain
@@ -135,7 +146,7 @@ Act → Fail → Repeat → Fail → Repeat forever
 ```text
 Model output
     ↓
-Strict Minecraft parser
+Strict Minecraft action representation
     ↓
 Action Rate Limiter
     ↓
@@ -148,15 +159,17 @@ Force ESC
 Minecraft executor
 ```
 
-Recovery decisions cannot execute OS commands or bypass Force ESC.
+The world model, memory and utility score cannot bypass this chain.
+
+No shell access, arbitrary OS commands, credentials or unrestricted desktop automation is introduced.
 
 ## Minecraft-only boundary
 
-The agent is limited to Minecraft-focused visual state, goals, bounded memory and Minecraft actions. No shell access, arbitrary desktop automation, credentials or unrestricted computer control is introduced.
+Qynl is designed around Minecraft-focused visual state, Minecraft goals, bounded memory and Minecraft actions.
 
 ## Real gameplay
 
-V16 retains the existing real-input runtime. Real input remains opt-in with `QYNL_DRY_RUN=0`.
+Real input remains opt-in with `QYNL_DRY_RUN=0`.
 
 Use a dedicated Minecraft test world and verify Force ESC before enabling real input.
 
@@ -190,29 +203,30 @@ AgentQynl/
 │   ├── v16_recovery.py
 │   ├── v16_memory.py
 │   ├── v16_rate_limiter.py
+│   ├── v20_world_model.py
+│   ├── v20_planner.py
+│   ├── v20_loop.py
 │   ├── executor.py
 │   └── input_adapter.py
 ├── memory/
 ├── safety/
 ├── evals/
 └── docs/
-    └── V16.md
+    └── V20.md
 ```
 
 ## Tests
 
-V16 adds tests for:
+V20 adds tests for:
 
-- low-confidence recovery
-- recovery budget exhaustion
-- negative-memory retrieval
-- action rate limiting
+- persistent world-object tracking
+- utility candidate ordering
 
 Run the complete test suite before real-input testing.
 
 ## Limitations
 
-V16 improves failure handling and adaptive control but does not guarantee that its diagnosis is correct. Recovery is deliberately bounded and conservative. Actual Minecraft performance still depends on perception, planning models, latency, Minecraft version/UI and task complexity.
+V20 is a stronger control architecture, not a guarantee of human-level Minecraft gameplay. Visual perception can be wrong, the world model only knows observed evidence, and utility scores are model estimates. Verification and bounded recovery remain essential.
 
 ## License
 
