@@ -1,24 +1,32 @@
-# Qynl Agent V20
+# Qynl Agent V21
 
-Qynl is a **Minecraft-only AI agent with temporal perception, hierarchical tasks, explicit goal evaluation, episodic skill memory, recovery, a persistent world model and utility-based planning**.
+Qynl is a **Minecraft-only AI agent with temporal perception, hierarchical tasks, explicit goal evaluation, episodic skill memory, recovery, a persistent world model, utility planning, prediction and information-gathering behavior**.
 
-## V20: World Model + Utility Planning
+## V21: Prediction + Exploration
 
-V20 is a major architecture update. Instead of treating each screenshot as an isolated decision, Qynl now maintains a compact structured world model and ranks multiple bounded action candidates before execution.
+V21 adds a decision layer for uncertainty. Qynl can now distinguish between **acting toward the goal** and **gathering information needed to act toward the goal**.
 
 ```text
 Minecraft screen
       ↓
-Vision observation
+Vision
       ↓
-Persistent World Model
+World Model + Spatial Memory
       ↓
-Goal + relevant memory
+Goal + Skill Memory
       ↓
-Utility Planner
+Candidate Planner
       ↓
-Candidate actions
+Transition Predictor
       ↓
+V21 Controller
+   ┌──┼─────────────┐
+ goal  explore   safe-stop
+  ↓      ↓           ↓
+rank   reobserve   no action
+  ↓    look around
+  ↓    small scan
+  ↓      ↓
 Rate Limiter
       ↓
 Runtime Watchdog
@@ -29,81 +37,104 @@ Force ESC
       ↓
 Minecraft
       ↓
-Post-action observation
-      ↓
-Verification / Recovery
+Verification
       ↓
 World Model update
 ```
 
-## V20 improvements
+## V21 improvements
 
-- 🌍 **Persistent Minecraft World Model**
-- 🧍 **Tracked observed entities** with confidence and coarse position hints
-- 🗺️ **Persistent landmarks, hazards and UI state**
-- 📝 **Recent world events**
-- 🎯 **Utility-based candidate planning**
-- 🔀 **Multiple candidate actions instead of one-shot planning**
-- 🧠 **Relevant memory integrated into planning**
-- 🔒 **Every candidate still passes the complete safety pipeline**
-- 🔄 **Integrated closed-loop orchestrator**
-- 🧪 V20 world-model/planner tests
-- 📚 Complete V20 documentation
+- 🧭 **Bounded Spatial Memory** for relative landmark observations
+- 🔁 **Landmark revisitation detection**
+- 🔎 **Information-gain exploration manager**
+- 👁️ **Uncertainty-driven re-observation**
+- 🔄 **Repeated-state exploration**
+- 🧠 **Transition outcome prediction**
+- ⚖️ **Expected progress vs. risk ranking**
+- 🛑 **Hazard-aware safe stop**
+- 🎯 **Dedicated V21 decision controller**
+- 🧪 V21 exploration/prediction tests
+- 📚 Complete V21 documentation
 
-## Persistent World Model
+## Spatial Memory
 
-`minecraft/v20_world_model.py` provides `WorldModel`.
-
-It stores only observed evidence:
+`minecraft/v21_spatial_memory.py` stores bounded relative observations such as:
 
 ```text
-entities / objects
-confidence
-coarse position hints
-landmarks
-hazards
-visible UI
-recent events
+village → ahead
+village → left
+forest  → behind
 ```
 
-It is deliberately **not** an invented 3D map. If Qynl has not observed something, the world model does not pretend to know it.
+Each observation includes confidence and a temporal tick. This gives Qynl evidence about revisitation without pretending screen-only perception provides exact world coordinates.
 
-## Utility Planner
+## Exploration
 
-`minecraft/v20_planner.py` changes planning from:
+`minecraft/v21_exploration.py` handles situations where acting is less useful than learning more about the current scene.
 
 ```text
-"give me one action"
+low confidence   → reobserve
+repeated state   → look around
+unknown area     → small scan
+hazard detected  → retreat or stop
+sufficient info  → continue goal
 ```
 
-to:
+Exploration is deliberately bounded. It is not permission to wander forever.
+
+## Transition Prediction
+
+`minecraft/v21_predictor.py` estimates each existing candidate's:
 
 ```text
-"give me a small set of possible actions and rank them"
+expected progress
+uncertainty
+risk
 ```
 
-Candidates are scored using model-estimated utility based on expected progress, observability, risk, recovery mode and relevant memory.
+The predictor is a ranking signal, not a Minecraft simulator. It does not claim knowledge that was not observed.
 
-The score does **not** grant execution authority. Every candidate is independently validated by the runtime.
+## V21 Controller
 
-## Integrated V20 loop
+`minecraft/v21_controller.py` combines confidence, world-state repetition, unknown-area signals, hazards and candidate predictions.
 
-`minecraft/v20_loop.py` orchestrates the major components:
+```text
+Enough information + safe
+        ↓
+    choose action
 
-1. Force ESC checkpoint
-2. Minecraft capture
-3. Vision observation
-4. World-model update
-5. Memory retrieval
-6. Candidate generation/ranking
-7. Rate limiting
-8. Runtime watchdog
-9. ActionPolicy validation
-10. Force ESC checkpoint
-11. One Minecraft action
-12. Post-action observation and existing verification/recovery flow
+Not enough information
+        ↓
+      explore
 
-Invalid or rejected candidates are discarded.
+Danger
+        ↓
+    safe stop
+
+No viable action
+        ↓
+      replan
+```
+
+The controller never directly bypasses the normal execution gates.
+
+## V20 → V21
+
+```text
+V20:
+Observe → World Model → Generate Options → Rank → Act → Verify
+
+V21:
+Observe → World Model + Spatial Memory
+       → Generate Options
+       → Predict outcomes
+       → Decide: ACT or EXPLORE or STOP
+       → Safety gates
+       → Verify
+       → Update
+```
+
+The important change is that **uncertainty becomes an explicit decision variable**.
 
 ## Evolution
 
@@ -116,29 +147,9 @@ V15  Shared state + watchdog + verification
  ↓
 V16  Recovery + adaptive memory + rate limiting
  ↓
-V20  Persistent world model + utility planning + integrated loop
-```
-
-The architecture is now centered around:
-
-```text
-OBSERVE
-  ↓
-MODEL THE WORLD
-  ↓
-REMEMBER RELEVANT EXPERIENCE
-  ↓
-GENERATE OPTIONS
-  ↓
-RANK OPTIONS
-  ↓
-VALIDATE
-  ↓
-ACT
-  ↓
-OBSERVE AGAIN
-  ↓
-VERIFY / RECOVER
+V20  Persistent world model + utility planning
+ ↓
+V21  Prediction + spatial memory + information-gain exploration
 ```
 
 ## Safety chain
@@ -159,7 +170,7 @@ Force ESC
 Minecraft executor
 ```
 
-The world model, memory and utility score cannot bypass this chain.
+Exploration, prediction and spatial memory cannot bypass this chain.
 
 No shell access, arbitrary OS commands, credentials or unrestricted desktop automation is introduced.
 
@@ -206,27 +217,33 @@ AgentQynl/
 │   ├── v20_world_model.py
 │   ├── v20_planner.py
 │   ├── v20_loop.py
+│   ├── v21_spatial_memory.py
+│   ├── v21_exploration.py
+│   ├── v21_predictor.py
+│   ├── v21_controller.py
 │   ├── executor.py
 │   └── input_adapter.py
 ├── memory/
 ├── safety/
 ├── evals/
 └── docs/
-    └── V20.md
+    └── V21.md
 ```
 
 ## Tests
 
-V20 adds tests for:
+V21 adds tests for:
 
-- persistent world-object tracking
-- utility candidate ordering
+- spatial landmark revisitation
+- uncertainty-driven exploration
+- risk-aware candidate prediction
+- hazard safe-stop
 
 Run the complete test suite before real-input testing.
 
 ## Limitations
 
-V20 is a stronger control architecture, not a guarantee of human-level Minecraft gameplay. Visual perception can be wrong, the world model only knows observed evidence, and utility scores are model estimates. Verification and bounded recovery remain essential.
+V21 predictions are estimates and spatial memory is coarse. Qynl cannot infer unseen Minecraft state with certainty. Exploration is bounded and conservative, and actual gameplay quality still depends on perception, models, latency, Minecraft version/UI and the environment.
 
 ## License
 
