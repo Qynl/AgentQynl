@@ -1,23 +1,23 @@
-# Qynl Agent V13
+# Qynl Agent V14
 
-Qynl is a **Minecraft-only AI agent with temporal perception**. It captures Minecraft, understands the current scene, tracks what changed across frames, chooses one bounded action, validates it, executes it, and feeds the resulting state back into planning.
+Qynl is a **Minecraft-only AI agent with temporal perception, hierarchical tasks, explicit goal evaluation and episodic skill memory**.
 
-## V13: temporal world awareness
+## V14: task + skill layer
 
-V13 builds directly on the V12 adaptive loop. The major improvement is that the agent no longer treats screenshots as isolated observations. It maintains a short-lived temporal state and gives the planner explicit state deltas, recent history, confidence, entities, UI, landmarks and hazards.
+V14 builds on V13 and adds the missing longer-term control layer:
 
 ```text
-Minecraft
+User goal
    ↓
-Screenshot
+Task Decomposer
    ↓
-Vision
+Subtask
    ↓
-Temporal State Tracker
+Temporal Minecraft state
    ↓
-Current State + Delta + Recent States
+Relevant past skills
    ↓
-Goal + Planner Evidence
+Planner
    ↓
 ONE MinecraftAction
    ↓
@@ -27,165 +27,127 @@ Force ESC
    ↓
 Minecraft
    ↓
-new screenshot
+New observation
    ↓
-state transition
+Goal Evaluator
    ↓
-next decision
+Success / failure evidence
+   ↓
+Skill Memory
+   ↓
+next subtask / recovery
 ```
 
-## V13 improvements
+## V14 improvements
 
-- 👁️ **Temporal perception** instead of isolated screenshots
-- 🧍 **Entity observations** with confidence and position hints
-- 🧠 **Short-term world-state history**
-- 🔎 **State delta detection** for entities, UI, landmarks and hazards
-- 📉 **Confidence tracking over time**
-- 🎯 **Temporal planner evidence**
-- 🔁 **Recent failure context** in planning
-- 🧪 V13 temporal perception tests
-- 📚 Complete V13 documentation
+- 🎯 **Hierarchical task decomposition** into bounded observable subtasks
+- ✅ **Explicit goal evaluator** that can say "not proven" instead of assuming success
+- 🧠 **Episodic skill memory** for reusable experience
+- 🔎 **Relevant-memory retrieval** based on the current goal and situation
+- 📈 **Outcome/reward records** for past attempts
+- 🔄 **Subtask progression** only after explicit evaluation
+- 🧪 V14 memory/task tests
+- 📚 Complete V14 documentation
 
-## Why temporal perception matters
+## Example task flow
 
-A single frame can be ambiguous. A sequence provides evidence about causality:
+A large goal such as `build a small shelter` can become:
 
 ```text
-Frame 1 → tree ahead
-Frame 2 → tree closer
-Frame 3 → tree damaged
-Frame 4 → log disappeared
+1. collect wood
+       ↓ verified
+2. craft tools
+       ↓ verified
+3. collect blocks
+       ↓ verified
+4. choose location
+       ↓ verified
+5. build shelter
+       ↓ verified
+6. check result
 ```
 
-Instead of merely asking "what is on screen?", V13 can give the planner information about **what changed**.
+The exact subtasks are generated conservatively and capped. Model text is treated as data and never executed as code.
 
-This is particularly useful for:
+## Goal evaluation
 
-- movement
-- breaking blocks
-- entities moving
-- inventory/UI changes
-- hazards appearing/disappearing
-- camera changes
-- verifying whether an action had an observable effect
+`minecraft/v14_evaluator.py` provides a separate evaluator for subtasks.
 
-## State model
-
-`minecraft/v13_state.py` provides:
-
-- `EntityObservation`
-- `TemporalState`
-- `StateDelta`
-- `TemporalStateTracker`
-
-A `TemporalState` contains:
+It compares the before/after observations against the subtask's success condition and returns:
 
 ```text
-summary
-entities
-landmarks
-hazards
-visible UI
-confidence
-frame index
+success
+score: 0..1
+evidence
 ```
 
-A `StateDelta` describes what changed since the previous observation.
+If the evaluator is uncertain or malformed, V14 defaults to **failure / not proven**. That is intentional. A bot confidently declaring "I built the house" while standing in a forest is not artificial intelligence, it is customer support.
 
-The history is bounded so long-running sessions do not accumulate unlimited state in memory.
+## Episodic skill memory
 
-## Planner
-
-`minecraft/v13_planner.py` builds `PlannerEvidence` containing:
-
-- current state
-- state delta
-- recent states
-- recent failures
-
-The planner is instructed to:
-
-- use temporal evidence instead of guessing
-- choose one small action
-- prefer actions whose effects can be verified
-- be cautious when confidence is low
-- avoid repeating failed actions without evidence that the situation changed
-
-The model still outputs only a structured Minecraft action.
-
-## Integrated controller
-
-`minecraft/v13_controller.py` connects the temporal tracker to the existing runtime:
+`minecraft/v14_memory.py` stores bounded experiences:
 
 ```text
-Vision
-  ↓
-TemporalStateTracker
-  ↓
-PlannerEvidence
-  ↓
-Model
-  ↓
-MinecraftAction
-  ↓
-Policy
-  ↓
-Force ESC
-  ↓
-Executor
+goal
+situation
+action type
+outcome
+reward
+lesson
 ```
 
-It has a bounded step budget and records recent failures for subsequent planning decisions.
+When Qynl encounters a similar goal/situation, it can retrieve relevant successful or failed experiences as planning context.
 
-## Action schema
+This is **retrieval-based memory**, not automatic model-weight training. The model does not silently modify itself during gameplay.
 
-The model may only request:
+## Why V14 matters
 
-```json
-{"type":"key","key":"w","duration_ms":250}
-```
-
-```json
-{"type":"mouse_move","x":35,"y":-8}
-```
-
-```json
-{"type":"mouse_button","button":"left","duration_ms":80}
-```
-
-```json
-{"type":"wait","duration_ms":150}
-```
-
-Unknown or malformed actions are rejected before execution.
-
-## Minecraft-only boundary
-
-The model receives Minecraft-focused visual state, goals and bounded action history.
-
-It does not receive shell access, arbitrary desktop automation, process creation, unrestricted filesystem access, credentials, or generic computer-control tools.
-
-## Safety chain
+V13 gave Qynl short-term temporal awareness:
 
 ```text
-Model
-  ↓
+What changed recently?
+```
+
+V14 adds longer-term task awareness:
+
+```text
+What am I trying to accomplish?
+What subtask am I on?
+Did it actually succeed?
+What worked in similar situations before?
+```
+
+That makes the architecture substantially closer to a task-oriented Minecraft agent.
+
+## Safety
+
+V14 does not expand computer permissions.
+
+All model-generated actions still pass through:
+
+```text
 Strict parser
-  ↓
+    ↓
 MinecraftAction
-  ↓
+    ↓
 ActionPolicy
-  ↓
+    ↓
 Force ESC
-  ↓
+    ↓
 Minecraft executor
 ```
 
-Force ESC remains independent of the model and cannot be disabled by it.
+Task decomposition, evaluation and memory are planning data. They cannot directly execute OS commands.
+
+## Minecraft-only boundary
+
+The agent is limited to Minecraft-focused visual state, goals, bounded history and Minecraft actions.
+
+It does not receive shell access, arbitrary desktop automation, process creation, unrestricted filesystem access, credentials, or generic computer-control tools.
 
 ## Real gameplay
 
-V13 retains the existing real-input runtime. Real input remains opt-in with `QYNL_DRY_RUN=0`.
+V14 retains the existing real-input runtime. Real input remains opt-in with `QYNL_DRY_RUN=0`.
 
 Use a dedicated Minecraft test world and verify Force ESC before enabling real input.
 
@@ -210,27 +172,30 @@ AgentQynl/
 │   ├── v13_state.py
 │   ├── v13_planner.py
 │   ├── v13_controller.py
+│   ├── v14_tasks.py
+│   ├── v14_evaluator.py
+│   ├── v14_memory.py
 │   ├── executor.py
 │   └── input_adapter.py
 ├── memory/
 ├── safety/
 ├── evals/
 └── docs/
-    └── V13.md
+    └── V14.md
 ```
 
 ## Tests
 
-V13 adds tests covering:
+V14 adds tests for:
 
-- temporal entity changes
-- planner evidence generation
+- successful skill retrieval
+- task-plan progression
 
 Run the complete test suite before real-input testing.
 
-## Important limitation
+## Limitations
 
-V13 substantially improves temporal state awareness, but perception quality still depends on the selected vision model, capture quality, latency, Minecraft version/UI and task complexity. State change is evidence, not automatic proof that a goal was completed.
+V14 still depends on the selected vision/planning model, capture quality, latency, Minecraft version/UI and task complexity. Memory is retrieval, not magical self-training, and evaluation is conservative when visual evidence is ambiguous.
 
 ## License
 
