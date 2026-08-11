@@ -1,140 +1,148 @@
-# Qynl Agent V21
+# Qynl Agent V22
 
-Qynl is a **Minecraft-only AI agent with temporal perception, hierarchical tasks, explicit goal evaluation, episodic skill memory, recovery, a persistent world model, utility planning, prediction and information-gathering behavior**.
+Qynl is a **Minecraft-only AI agent with temporal perception, hierarchical tasks, explicit goal monitoring, episodic skill memory, recovery, a persistent world model, utility planning, prediction, exploration and short-horizon replanning**.
 
-## V21: Prediction + Exploration
+## V22: Hierarchical Planning + Closed-Loop Execution
 
-V21 adds a decision layer for uncertainty. Qynl can now distinguish between **acting toward the goal** and **gathering information needed to act toward the goal**.
+V22 turns the previous planning components into a more explicit hierarchy: **goal → subtask → short action sequence → one verified action → update → replan**.
 
 ```text
-Minecraft screen
-      ↓
-Vision
-      ↓
-World Model + Spatial Memory
-      ↓
-Goal + Skill Memory
-      ↓
+Goal
+ ↓
+Goal Monitor
+ ↓
+Subtask Graph
+ ↓
+World Model + Spatial Memory + Skill Memory
+ ↓
 Candidate Planner
-      ↓
+ ↓
 Transition Predictor
-      ↓
-V21 Controller
-   ┌──┼─────────────┐
- goal  explore   safe-stop
-  ↓      ↓           ↓
-rank   reobserve   no action
-  ↓    look around
-  ↓    small scan
-  ↓      ↓
+ ↓
+Short-Horizon Sequencer
+ ↓
+Replan Policy
+ ↓
 Rate Limiter
-      ↓
-Runtime Watchdog
-      ↓
+ ↓
+Watchdog
+ ↓
 ActionPolicy
-      ↓
+ ↓
 Force ESC
-      ↓
+ ↓
 Minecraft
-      ↓
-Verification
-      ↓
-World Model update
+ ↓
+Verify
+ ↓
+Goal/Subtask update
 ```
 
-## V21 improvements
+## V22 improvements
 
-- 🧭 **Bounded Spatial Memory** for relative landmark observations
-- 🔁 **Landmark revisitation detection**
-- 🔎 **Information-gain exploration manager**
-- 👁️ **Uncertainty-driven re-observation**
-- 🔄 **Repeated-state exploration**
-- 🧠 **Transition outcome prediction**
-- ⚖️ **Expected progress vs. risk ranking**
-- 🛑 **Hazard-aware safe stop**
-- 🎯 **Dedicated V21 decision controller**
-- 🧪 V21 exploration/prediction tests
-- 📚 Complete V21 documentation
+- 🎯 **Explicit Goal Monitor** with ACTIVE / PROGRESS / STALLED / COMPLETE / FAILED
+- 🌳 **Hierarchical Subtask Graph**
+- 🧩 **Bounded short-horizon action sequencing**
+- 🔄 **Deterministic replanning triggers**
+- 🧠 **Goal/subtask progress feedback**
+- 🛑 **Terminal-state handling** so completed/failed goals are not endlessly replanned
+- 🔒 **Every action still passes the existing safety pipeline**
+- 🧪 V22 goal/sequencing/replanning tests
+- 📚 Complete V22 documentation
 
-## Spatial Memory
+## Goal Monitor
 
-`minecraft/v21_spatial_memory.py` stores bounded relative observations such as:
+`minecraft/v22_goal_monitor.py` gives the current objective an explicit state:
 
 ```text
-village → ahead
-village → left
-forest  → behind
+ACTIVE
+PROGRESS
+STALLED
+COMPLETE
+FAILED
 ```
 
-Each observation includes confidence and a temporal tick. This gives Qynl evidence about revisitation without pretending screen-only perception provides exact world coordinates.
+Completion requires strong completion evidence **and** enough confidence. A single uncertain visual cue is not treated as proof that the objective is complete.
 
-## Exploration
+## Hierarchical Subtasks
 
-`minecraft/v21_exploration.py` handles situations where acting is less useful than learning more about the current scene.
+`minecraft/v22_subtasks.py` represents larger Minecraft objectives as smaller pieces.
+
+Example:
 
 ```text
-low confidence   → reobserve
-repeated state   → look around
-unknown area     → small scan
-hazard detected  → retreat or stop
-sufficient info  → continue goal
+Survive first night
+├── collect wood
+├── craft tools
+├── collect food
+└── build shelter
 ```
 
-Exploration is deliberately bounded. It is not permission to wander forever.
+The immediate action can therefore serve a specific subtask while the monitor tracks the larger objective.
 
-## Transition Prediction
+## Short-Horizon Sequencing
 
-`minecraft/v21_predictor.py` estimates each existing candidate's:
+`minecraft/v22_action_sequence.py` can build a small sequence from already-ranked candidates.
+
+The sequence is deliberately short. Qynl does **not** blindly execute a huge macro:
 
 ```text
-expected progress
-uncertainty
-risk
+Plan 2–3 steps
+ ↓
+Execute ONE
+ ↓
+Observe
+ ↓
+Verify
+ ↓
+Continue / modify / abort
 ```
 
-The predictor is a ranking signal, not a Minecraft simulator. It does not claim knowledge that was not observed.
+This preserves the agent's ability to react to the actual Minecraft state.
 
-## V21 Controller
+## Replanning
 
-`minecraft/v21_controller.py` combines confidence, world-state repetition, unknown-area signals, hazards and candidate predictions.
+`minecraft/v22_replan.py` provides explicit replanning triggers:
+
+- selected action rejected
+- repeated state without progress
+- high uncertainty
+- recovery exhausted
+
+Terminal goal states do not trigger pointless replanning.
+
+## V21 → V22
+
+V21 made uncertainty explicit:
 
 ```text
-Enough information + safe
-        ↓
-    choose action
-
-Not enough information
-        ↓
-      explore
-
-Danger
-        ↓
-    safe stop
-
-No viable action
-        ↓
-      replan
+Observe → Predict → ACT / EXPLORE / STOP → Verify
 ```
 
-The controller never directly bypasses the normal execution gates.
-
-## V20 → V21
+V22 adds hierarchy and persistent plan control:
 
 ```text
-V20:
-Observe → World Model → Generate Options → Rank → Act → Verify
-
-V21:
-Observe → World Model + Spatial Memory
-       → Generate Options
-       → Predict outcomes
-       → Decide: ACT or EXPLORE or STOP
-       → Safety gates
-       → Verify
-       → Update
+Goal
+ ↓
+Subtask
+ ↓
+Plan short horizon
+ ↓
+Execute one step
+ ↓
+Verify
+ ↓
+Update
+ ↓
+Replan if necessary
 ```
 
-The important change is that **uncertainty becomes an explicit decision variable**.
+The agent now has a clearer separation between:
+
+- **what** it wants
+- **what subgoal** it is currently pursuing
+- **which action** it should perform
+- **whether the plan is still valid**
 
 ## Evolution
 
@@ -149,7 +157,9 @@ V16  Recovery + adaptive memory + rate limiting
  ↓
 V20  Persistent world model + utility planning
  ↓
-V21  Prediction + spatial memory + information-gain exploration
+V21  Prediction + spatial memory + exploration
+ ↓
+V22  Goal hierarchy + short-horizon planning + replanning
 ```
 
 ## Safety chain
@@ -170,7 +180,7 @@ Force ESC
 Minecraft executor
 ```
 
-Exploration, prediction and spatial memory cannot bypass this chain.
+Short-horizon sequences, subtasks and replanning cannot bypass this chain.
 
 No shell access, arbitrary OS commands, credentials or unrestricted desktop automation is introduced.
 
@@ -221,29 +231,34 @@ AgentQynl/
 │   ├── v21_exploration.py
 │   ├── v21_predictor.py
 │   ├── v21_controller.py
+│   ├── v22_goal_monitor.py
+│   ├── v22_action_sequence.py
+│   ├── v22_subtasks.py
+│   ├── v22_replan.py
 │   ├── executor.py
 │   └── input_adapter.py
 ├── memory/
 ├── safety/
 ├── evals/
 └── docs/
-    └── V21.md
+    └── V22.md
 ```
 
 ## Tests
 
-V21 adds tests for:
+V22 adds tests for:
 
-- spatial landmark revisitation
-- uncertainty-driven exploration
-- risk-aware candidate prediction
-- hazard safe-stop
+- goal completion confidence
+- stalled-goal detection
+- bounded action sequences
+- hierarchical subtasks
+- deterministic replanning
 
 Run the complete test suite before real-input testing.
 
 ## Limitations
 
-V21 predictions are estimates and spatial memory is coarse. Qynl cannot infer unseen Minecraft state with certainty. Exploration is bounded and conservative, and actual gameplay quality still depends on perception, models, latency, Minecraft version/UI and the environment.
+V22 is still a screen-based agent. It cannot guarantee unseen world state, perfect goal recognition or perfect predictions. Short-horizon planning is deliberately bounded so Qynl can correct itself frequently.
 
 ## License
 
