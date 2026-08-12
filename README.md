@@ -1,19 +1,20 @@
-# Qynl Agent V2.5
+# Qynl Agent V2.6
 
 Qynl is a **Minecraft-only autonomous AI agent** with visual perception, temporal state, hierarchical planning, persistent world state, verified learning, mission-level autonomy, recovery, typed actions, deterministic evaluation and explicit runtime safety.
 
-## V2.5: Gameplay Reliability Update
+## V2.6: Pathfinding + Navigation Intelligence
 
-V2.5 builds on the V50 architecture and the V2.1/V2.2 reliability work. This release focuses on practical Minecraft behavior: navigation targets, bounded recovery and better regression testing.
+V2.6 is the navigation-focused release. It adds a bounded A* pathfinding primitive, path scoring, navigation-step generation and stuck detection while keeping the V50 safety architecture underneath execution.
 
-### V2.5 additions
+### V2.6 additions
 
-- bounded waypoint navigation helper
-- explicit arrival detection
-- confidence-aware recovery
-- mission-regression recovery
-- bounded retry budgets
-- Minecraft-specific regression tests
+- bounded 3D A* pathfinding
+- blocked-cell avoidance
+- expansion limits
+- path length/risk scoring
+- path-to-navigation-step bridge
+- navigation stall detection
+- expanded Minecraft regression tests
 
 ## Core control loop
 
@@ -22,11 +23,15 @@ MINECRAFT
     ↓
 OBSERVE
     ↓
-STATE
+STATE / WORLD MODEL
     ↓
 MISSION
     ↓
 PLAN
+    ↓
+PATHFIND
+    ↓
+SCORE PATH
     ↓
 TRACE DECISION
     ↓
@@ -38,79 +43,132 @@ EXECUTE
     ↓
 VERIFY
     ↓
-TRACK PROGRESS
+STUCK CHECK
     ↓
-NAVIGATE / RECOVER / REPLAN
+PROGRESS
     ↓
-LEARN
+LEARN / RECOVER / REPLAN
 ```
 
 The core rule remains: **the model can propose; the runtime decides.**
 
-## V2.5 components
+## V2.6 components
 
-### Navigation
+### Bounded A* pathfinding
 
-`minecraft/v25_navigation.py`
+`minecraft/v26_pathfinding.py`
 
-V2.5 introduces a small deterministic navigation layer for waypoint-based tasks.
-
-A waypoint contains:
-
-- X coordinate
-- Y coordinate
-- Z coordinate
-- optional name
-
-The navigator calculates distance and distinguishes between:
+The new pathfinder searches a discrete 3D grid using A* and a configurable expansion budget.
 
 ```text
-arrived
-move_to_waypoint
+start
+  ↓
+known blocked cells
+  ↓
+A*
+  ↓
+path / failure
 ```
 
-This is intentionally a navigation primitive, not a claim that Qynl can already pathfind perfectly around arbitrary Minecraft terrain. Higher-level pathfinding can build on it.
+The expansion limit is deliberate. A bad or huge path request cannot consume unbounded compute.
 
-### Recovery policy
+### Path navigation
 
-`minecraft/v25_recovery.py`
+`minecraft/v26_navigation.py`
 
-Recovery now considers three signals:
+Converts a planned path into the next bounded navigation step. The path planner does not directly bypass the existing executor or safety layers.
 
-- consecutive action failures
-- mission progress regression
-- perception confidence
+### Stuck detection
 
-Possible decisions are:
+`minecraft/v26_stuck_detector.py`
+
+Tracks repeated observations with no movement and signals when navigation has stalled.
+
+The detector does not issue input itself. It feeds the existing recovery/replanning system.
+
+### Path scoring
+
+`minecraft/v26_path_cost.py`
+
+Provides a small scoring primitive based on path length and bounded risk. This lets higher-level planning compare candidate routes rather than blindly selecting the first valid route.
+
+## V2.6 navigation architecture
 
 ```text
-continue
-retry_once
-replan
-reobserve
+           WORLD OBSERVATION
+                  ↓
+          ┌───────────────┐
+          │ World / State │
+          └───────┬───────┘
+                  ↓
+          ┌───────────────┐
+          │   A* Search   │
+          └───────┬───────┘
+                  ↓
+             candidate paths
+                  ↓
+          ┌───────────────┐
+          │ Path Scoring  │
+          └───────┬───────┘
+                  ↓
+            selected route
+                  ↓
+          ┌───────────────┐
+          │ Next Nav Step │
+          └───────┬───────┘
+                  ↓
+             SAFETY STACK
+                  ↓
+              EXECUTION
+                  ↓
+              VERIFY
+             ↙       ↘
+          moved      stalled
+            ↓           ↓
+         continue    recover/replan
 ```
 
-A bounded retry budget prevents an agent from repeating a failed action forever.
+## Important limitation
 
-### Tests
+V2.6's pathfinder is a **planning primitive**, not a finished Minecraft movement controller.
 
-`evals/test_v25.py` covers:
+Real Minecraft navigation still needs environment-aware handling for things such as:
 
-- waypoint arrival
-- distant waypoint handling
-- low-confidence recovery
-- progress-regression replanning
-- retry-budget exhaustion
+- collision geometry
+- jumping and falling
+- terrain height changes
+- water and lava
+- ladders and climbing
+- doors and interactable blocks
+- dynamic entities
+- newly discovered obstacles
+- path invalidation after world changes
+
+The correct architecture is therefore **plan → execute one bounded step → observe → verify → replan**, rather than blindly executing an entire path.
+
+## Tests
+
+`evals/test_v26.py` covers both existing V2.6 mission/recovery behavior and the new navigation layer:
+
+- A* routes around blocked cells
+- A* respects its expansion budget
+- navigation selects the next path node
+- stuck detector triggers after repeated no-progress observations
+- path-risk values are bounded
+- mission lifecycle
+- verified mission memory
+- recovery escalation
 
 ## Versioning
 
-V50 remains the major architecture milestone. The public product line continues from V2.0 without carrying the old V50 number into every release.
+V50 remains the major architecture milestone. The public product line continues from V2.0.
 
 ```text
 V2.0 = V50 architecture baseline
 V2.1 = observation + feedback reliability
 V2.2 = debugability + progress measurement + pacing
-V2.5 = gameplay reliability + navigation + recovery
+V2.5 = gameplay reliability + navigation/recovery foundations
+V2.6 = pathfinding + navigation feedback
 V3.0 = only for a genuinely major architectural change
 ```
 
@@ -154,7 +212,7 @@ Start in dry-run mode:
 QYNL_DRY_RUN=1
 ```
 
-Then verify capture, perception, planning, action validation, navigation, recovery, watchdog, Force ESC, missions, telemetry and V50 safety before enabling real Minecraft input.
+Then verify capture, perception, planning, pathfinding, action validation, navigation, recovery, watchdog, Force ESC, missions, telemetry and V50 safety before enabling real Minecraft input.
 
 Use a dedicated test world for early sessions.
 
@@ -204,7 +262,7 @@ watchdog / Force ESC
 Minecraft
 ```
 
-Navigation and recovery can recommend what should happen next, but they do not bypass the safety supervisor or execution validation.
+Pathfinding, navigation and recovery can recommend what should happen next, but they do not bypass execution validation or the safety supervisor.
 
 ## Project structure
 
@@ -232,7 +290,7 @@ AgentQynl/
 
 ## Limitations
 
-V2.5 improves navigation and recovery primitives. It does not by itself guarantee strong autonomous Minecraft gameplay or solve arbitrary terrain pathfinding. Real performance still depends on perception quality, model quality, latency, input handling and reliable verification.
+V2.6 significantly improves navigation planning, but it does not claim arbitrary-terrain autonomous Minecraft movement. Real performance still depends on perception quality, world-state accuracy, model quality, latency, input handling and reliable verification.
 
 ## License
 
