@@ -1,157 +1,196 @@
-# Qynl Agent V2.8
+# Qynl Agent V2.9
 
 Qynl is a **Minecraft-only autonomous AI agent** with visual perception, temporal state, hierarchical planning, persistent world state, verified learning, mission-level autonomy, recovery, typed actions, deterministic evaluation and explicit runtime safety.
 
-## V2.8: Production Minecraft Vision
+## V2.9: Full Hybrid Minecraft Vision
 
-V2.8 now contains the production adapter boundary **and a Minecraft-focused vision layer**. Screen frames can be passed through deterministic CV for cheap, explainable geometry signals and through an optional semantic vision backend for richer scene understanding.
-
-### V2.8 additions
-
-- production screen-capture interface
-- optional MSS screen backend
-- optional PyAutoGUI input backend
-- Minecraft crosshair detection hint
-- Minecraft HUD region extraction
-- hotbar/health/food region metadata
-- inventory-region metadata
-- structured block/entity detection schema
-- optional semantic vision backend interface
-- strict vision-result validation
-- temporal world-state delta tracking
-- emergency-stop propagation
-- adapter and vision regression tests
-
-## Real-session architecture
+V2.9 turns the earlier vision boundary into a real hybrid perception stack:
 
 ```text
-MINECRAFT WINDOW
-      ↓
-SCREEN CAPTURE
-      ↓
-┌──────────────────────────────┐
-│ Minecraft Vision              │
-│                              │
-│ deterministic CV + model CV │
-└──────────────┬───────────────┘
-               ↓
-       VALIDATED WORLD STATE
-               ↓
-       TEMPORAL STATE TRACKER
-               ↓
-       MISSION / PLAN / PATHFIND
-               ↓
-          V30 / V31 / V50
-               ↓
-       PRODUCTION INPUT
-               ↓
-        KEYBOARD / MOUSE
-               ↓
-           MINECRAFT
-               ↓
-          NEW FRAME ↺
+SCREENSHOT
+   ↓
+LOCAL CV ─────────────┐
+   │                  │
+   ├─ crosshair       │
+   ├─ HUD geometry    │
+   ├─ UI/inventory    │
+   └─ block geometry  │
+                      ↓
+                FUSION / TRACKING
+                      ↑
+                OPTIONAL VLM
+                      │
+                 NIM / OTHER
+                      │
+               semantic labels
+                      ↓
+              VALIDATED WORLD STATE
 ```
 
-The core rule remains: **the model can propose; the runtime decides.**
+### V2.9 additions
 
-## Minecraft vision
+- hybrid deterministic-CV + semantic vision engine
+- NVIDIA NIM VLM adapter
+- base64 screenshot transport to OpenAI-compatible NIM `/v1/chat/completions`
+- automatic NIM model discovery when no model is configured
+- conservative JSON parsing
+- temporal block/entity tracking with stable IDs
+- short occlusion tolerance
+- optional OCR for Minecraft tooltips/chat/item text
+- rate-limited semantic inference so the VLM does not have to process every frame
+- expanded regression tests
 
-`minecraft/v28_minecraft_vision.py`
+## Minecraft vision engine
 
-`MinecraftVision` is the deterministic baseline. It extracts information that can be justified from pixels and deliberately leaves information unknown when a screenshot cannot establish it reliably.
+`minecraft/v29_vision_engine.py`
 
-### Crosshair
+The engine deliberately separates what can be established cheaply from pixels from what benefits from semantic AI.
 
-The detector inspects the center of the frame for a high-contrast crosshair hint and returns its pixel location and confidence.
+### Local CV signals
 
-This is a **hint**, not a guarantee that the server/client uses the vanilla crosshair.
+- crosshair location/hint
+- HUD geometry
+- heart-like and food-like pixel regions
+- hotbar region
+- inventory grid evidence
+- block-face geometry candidates
+- player screen center
 
-### HUD
+The local CV layer does **not** invent block names or world coordinates.
 
-The baseline provides Minecraft-oriented regions for:
+### Semantic VLM signals
 
-- hotbar
-- health
-- food
+The VLM can supply:
 
-These are geometry signals. Exact hearts, hunger values, item names and counts require a semantic/UI recognition backend.
+- visible block identities
+- visible entity identities
+- bounding boxes
+- readable inventory contents
+- selected item information
+- HUD values when visually readable
+- other screen-grounded Minecraft semantics
 
-### Inventory
+The prompt explicitly requires unknown values to remain `null` instead of hallucinating coordinates or state.
 
-The baseline exposes the expected center inventory region but returns `open: null` until a classifier/model can actually establish whether an inventory screen is open.
+## NVIDIA NIM
 
-### Player position
+`minecraft/v29_nim_vlm.py`
 
-A screenshot alone does **not** provide authoritative 3D world coordinates. V2.8 therefore returns:
+Qynl includes a standard-library HTTP adapter for NVIDIA NIM VLM. Current NIM VLM documentation exposes an OpenAI-compatible `/v1/chat/completions` endpoint and `/v1/models`; the adapter uses those endpoints and sends screenshots as JPEG data URLs.
+
+Configure a local NIM endpoint such as:
 
 ```text
-position = null
-yaw = null
-pitch = null
+http://localhost:8000/v1
 ```
 
-until a world-state/depth backend supplies them. Qynl does not fabricate coordinates from a 2D image.
+and optionally provide the served model name. If no model is supplied, Qynl queries `/v1/models` and uses the first available model.
 
-## Semantic vision backend
+The NIM adapter is intentionally provider-specific only at this boundary. The rest of Qynl uses the generic `SemanticBackend` interface.
 
-`minecraft/v28_vision_backends.py`
+## Hybrid runtime
 
-The runtime accepts a small injectable interface:
+`minecraft/v29_hybrid_backend.py`
 
-```python
-image + system_prompt → structured JSON
-```
-
-The backend must return:
+Semantic inference is rate-limited:
 
 ```text
-confidence
-player
-visible_blocks
-entities
-ui
+Frame 1 → local CV + VLM
+Frame 2 → local CV
+Frame 3 → local CV
+Frame 4 → local CV + VLM
+...
 ```
 
-`validate_vision_result()` rejects malformed or unsafe schema output before it becomes trusted state.
+This keeps the fast perception path responsive while allowing richer semantic refreshes.
 
-This makes the vision provider replaceable. A local model, NVIDIA-backed vision service, or another compatible provider can be connected without changing the Minecraft runtime.
+Every block/entity detection passes through temporal tracking.
 
-## Production adapter
+## Temporal tracking
 
-`minecraft/v28_production_adapter.py`
+`minecraft/v29_temporal_vision.py`
 
-Defines:
+Detections receive stable `track_id` values when consecutive bounding boxes overlap sufficiently.
+
+A short disappearance is treated as an occlusion rather than immediately creating a new object:
 
 ```text
-ScreenCapture
-MinecraftInput
-VisionBackend
+cow #4
+  ↓
+visible
+  ↓
+not visible for 1 frame
+  ↓
+still track #4
+  ↓
+visible again
+  ↓
+track #4
 ```
 
-The adapter now validates every vision result before producing `WorldState`.
+This prevents the planner from interpreting normal frame-to-frame flicker as dozens of new entities.
 
-## World-state extraction
+## OCR
 
-`minecraft/v28_world_state.py`
+`minecraft/v29_ocr.py`
 
-Consecutive observations produce:
+Optional Tesseract OCR can read screen text such as:
+
+- item tooltips
+- readable inventory names
+- chat text
+
+OCR is supplemental. It is never treated as authoritative merely because text was detected.
+
+## World-state pipeline
 
 ```text
-position_changed
-visible_block_count_delta
-entity_count_delta
+Minecraft
+   ↓
+MSS / ScreenCapture
+   ↓
+Frame timestamp
+   ↓
+Local CV
+   ↓
+Optional NIM VLM
+   ↓
+Fusion
+   ↓
+Schema validation
+   ↓
+Temporal tracking
+   ↓
+WorldState
+   ↓
+Mission / Planner
+   ↓
+V2.6 A* Pathfinding
+   ↓
+V2.7 Runtime
+   ↓
+V30 / V31 / V50 Safety
+   ↓
+Input Adapter
+   ↓
+Minecraft
 ```
 
-This lets the planner reason over change instead of treating every screenshot as an isolated image.
+## What the screenshot can and cannot tell us
 
-## Reference desktop backends
+A screenshot can provide visual evidence, but it is not a direct game-state API.
 
-`minecraft/v28_backends.py`
+Therefore Qynl follows these rules:
 
-- `MSSScreenCapture` for desktop capture
-- `PyAutoGUIInput` for keyboard/mouse transport
+- no invented world XYZ
+- no invented yaw/pitch
+- no invented inventory contents
+- no invented entity identity
+- unknown values remain unknown
+- every semantic result carries confidence
+- stale observations are not silently treated as current
 
-These are transport adapters. They do not pretend to solve Minecraft semantics themselves.
+If authoritative coordinates are eventually needed, the correct architecture is to add a **separate game-state source** rather than hallucinating them from pixels.
 
 ## Safety boundary
 
@@ -179,44 +218,7 @@ Production Input Adapter
 Minecraft
 ```
 
-Vision, pathfinding and world-state extraction cannot bypass execution safety.
-
-## Safe real-Minecraft workflow
-
-```text
-1. Dedicated test world
-2. Dry-run
-3. Verify screen capture
-4. Verify deterministic CV
-5. Verify semantic vision + schema
-6. Verify world-state deltas
-7. Test Force ESC
-8. Short bounded real sessions
-9. Inspect traces and verification
-10. Increase autonomy gradually
-```
-
-Do not run an untested adapter unattended.
-
-## Tests
-
-- `evals/test_v28_adapters.py`
-- `evals/test_v28_vision.py`
-
-Coverage includes adapter observations, emergency stop, malformed vision output, temporal state changes and semantic backend validation.
-
-## Versioning
-
-```text
-V2.0 = V50 architecture baseline
-V2.1 = observation + feedback reliability
-V2.2 = debugability + progress measurement + pacing
-V2.5 = gameplay reliability + navigation/recovery foundations
-V2.6 = pathfinding + navigation feedback
-V2.7 = usable runtime boundary
-V2.8 = production adapters + Minecraft vision
-V3.0 = only for a genuinely major architectural change
-```
+Vision, VLM output, tracking and pathfinding cannot bypass execution safety.
 
 ## Installation
 
@@ -238,7 +240,13 @@ Linux/macOS:
 source .venv/bin/activate
 ```
 
-Install the repository dependencies. For the vision baseline, install the optional packages from `requirements-vision.txt`.
+Install vision dependencies:
+
+```bash
+pip install -r requirements-vision.txt
+```
+
+The NIM adapter itself uses Python's standard library for HTTP. A compatible NIM VLM must be running separately.
 
 For the TSX desktop app:
 
@@ -248,13 +256,50 @@ npm install
 npm run dev
 ```
 
+## Safe real-Minecraft workflow
+
+```text
+1. Dedicated test world
+2. Dry-run
+3. Verify screen capture
+4. Verify local CV
+5. Verify VLM JSON + schema
+6. Verify temporal tracking
+7. Test Force ESC
+8. Run short bounded sessions
+9. Inspect traces and verification
+10. Increase autonomy gradually
+```
+
+Do not run an untested adapter unattended.
+
+## Tests
+
+- `evals/test_v28_adapters.py`
+- `evals/test_v28_vision.py`
+- `evals/test_v29_vision.py`
+
+V2.9 tests include stable tracking IDs, short occlusion handling and NIM JSON parsing.
+
+## Versioning
+
+```text
+V2.0 = V50 architecture baseline
+V2.1 = observation + feedback reliability
+V2.2 = debugability + progress measurement + pacing
+V2.5 = gameplay reliability + navigation/recovery foundations
+V2.6 = pathfinding + navigation feedback
+V2.7 = usable runtime boundary
+V2.8 = production screen/input/world-state adapters
+V2.9 = full hybrid Minecraft vision
+V3.0 = only for a genuinely major architectural change
+```
+
 ## Limitations
 
-V2.8 is now a real screen-to-structured-state foundation, but it does **not** claim perfect Minecraft perception. Exact 3D coordinates, block identity, entity identity, health values, inventory contents and semantic interactions require a trained/connected vision backend or game-state source.
+V2.9 is a serious screen-perception stack, but no screenshot-only system can guarantee perfect game-state reconstruction. Visual occlusion, resource packs, shaders, UI scaling, camera effects, low resolution and model errors can reduce accuracy.
 
-The architecture intentionally follows:
-
-**observe → validate → decide → safely act → observe again**
+For maximum reliability, visual perception should eventually be combined with a Minecraft-side telemetry/state source where appropriate. The screen/VLM path remains the human-visible perception channel.
 
 ## License
 
