@@ -1,146 +1,208 @@
-# Qynl Agent V2.7
+# Qynl Agent V2.8
 
 Qynl is a **Minecraft-only autonomous AI agent** with visual perception, temporal state, hierarchical planning, persistent world state, verified learning, mission-level autonomy, recovery, typed actions, deterministic evaluation and explicit runtime safety.
 
-## V2.7: Usable Minecraft Runtime
+## V2.8: Production Adapter Layer
 
-V2.7 turns the V2.6 navigation primitives into a bounded runtime loop that can be wired to a real Minecraft input adapter. The release focuses on the practical boundary between AI decisions and actual Minecraft control.
+V2.8 adds the production boundary between the agent and a real Minecraft desktop session: screen capture, vision analysis, keyboard/mouse input, and temporal world-state extraction are now represented by explicit interfaces.
 
-### V2.7 additions
+The design deliberately keeps platform-specific dependencies outside the AI core.
 
-- practical runtime controller
-- injectable Minecraft input adapter
-- bounded observe → decide → execute → verify session loop
-- low-confidence input suppression
-- runtime pause/resume
-- emergency-stop integration
-- movement verification
-- navigation-stall handling
-- runtime regression tests
+### V2.8 additions
 
-## Core control loop
+- production screen-capture interface
+- optional MSS screen backend
+- optional PyAutoGUI input backend
+- strict vision-result schema validation
+- structured world-state extraction
+- temporal world-state delta tracking
+- emergency-stop propagation
+- bounded key tap duration
+- adapter regression tests
+
+## Real-session architecture
 
 ```text
+MINECRAFT WINDOW
+      ↓
+SCREEN CAPTURE
+      ↓
+VISION BACKEND
+      ↓
+VALIDATED WORLD STATE
+      ↓
+TEMPORAL STATE TRACKER
+      ↓
+MISSION / PLAN / PATHFIND
+      ↓
+V30 / V31 / V50 SAFETY
+      ↓
+PRODUCTION INPUT ADAPTER
+      ↓
+KEYBOARD / MOUSE
+      ↓
 MINECRAFT
-    ↓
-OBSERVE
-    ↓
-CONFIDENCE CHECK
-    ↓
-WORLD STATE
-    ↓
-MISSION / GOAL
-    ↓
-PLAN + PATHFIND
-    ↓
-TRACE DECISION
-    ↓
-SAFETY
-    ↓
-EXECUTE ONE STEP
-    ↓
-FRESH OBSERVATION
-    ↓
-VERIFY
-    ↓
-PROGRESS / STUCK CHECK
-    ↓
-CONTINUE / REOBSERVE / REPLAN / STOP
+      ↓
+NEW SCREEN FRAME
+      ↺
 ```
 
 The core rule remains: **the model can propose; the runtime decides.**
 
-## V2.7 runtime
+## Production adapter
 
-`minecraft/v27_runtime.py`
+`minecraft/v28_production_adapter.py`
 
-`MinecraftRuntime` provides the execution boundary. It accepts an injected `InputAdapter` instead of directly depending on a keyboard/mouse library.
-
-The adapter must provide:
+Defines three injected interfaces:
 
 ```text
-move(dx, dy, dz)
-stop()
+ScreenCapture
+MinecraftInput
+VisionBackend
+```
+
+The `ProductionAdapter` turns them into a structured `WorldState` and exposes controlled input primitives.
+
+### Screen
+
+A `ScreenFrame` contains:
+
+- image/frame object
+- monotonic timestamp
+- width
+- height
+
+Timestamps are checked so stale/out-of-order frames cannot silently become the newest world state.
+
+### Vision
+
+The vision backend returns:
+
+```text
+confidence
+player
+visible_blocks
+entities
+ui
+```
+
+Confidence is bounded to `[0, 1]` before entering the runtime.
+
+### Input
+
+The input interface supports:
+
+```text
+key_down()
+key_up()
+mouse_move()
+mouse_button()
 emergency_stop()
 ```
 
-This keeps the AI/planning layer separate from real input and makes the runtime testable without controlling a real Minecraft window.
+`stop()` releases the movement keys used by the adapter. `emergency_stop()` additionally forwards the emergency-stop event to the backend.
 
-### Low-confidence behavior
+## Reference desktop backends
 
-If observation confidence falls below the runtime threshold, Qynl returns:
+`minecraft/v28_backends.py`
 
-```text
-reobserve
-```
+### MSS
 
-and does not generate movement input.
+`MSSScreenCapture` uses the optional `mss` package for desktop capture. The dependency is imported lazily, so installations that do not use this backend do not need to import it.
 
-### Emergency stop
+### PyAutoGUI
 
-`emergency_stop()` pauses the runtime and forwards the stop request to the adapter. While paused, decisions are `stop` until an explicit resume occurs.
+`PyAutoGUIInput` uses the optional `pyautogui` package for keyboard/mouse control. It tracks pressed keys so emergency stop can release them.
 
-## Bounded session loop
+PyAutoGUI's failsafe is enabled by the adapter.
 
-`minecraft/v27_session.py`
+These are **reference transport adapters**, not a claim that every Minecraft version/window configuration is automatically solved.
 
-The session controller repeatedly:
+## World-state extraction
 
-1. obtains a fresh observation
-2. makes one bounded decision
-3. executes at most one navigation step
-4. obtains another observation
-5. verifies movement
-6. continues, replans or stops
+`minecraft/v28_world_state.py`
 
-A maximum step budget prevents an unattended session loop from running forever.
-
-## Pathfinding
-
-V2.7 uses the V2.6 navigation stack:
+`WorldStateTracker` compares consecutive observations and produces a compact delta:
 
 ```text
-World observation
-      ↓
-bounded A*
-      ↓
-path scoring
-      ↓
-next path node
-      ↓
-V50 safety
-      ↓
-input adapter
+position_changed
+visible_block_count_delta
+entity_count_delta
 ```
 
-The path is never blindly executed as one giant command. Minecraft is dynamic, so every step is followed by fresh observation.
+This gives the planner/runtime a temporal signal rather than treating every screenshot as an isolated image.
+
+## Vision schema validation
+
+`minecraft/v28_vision_schema.py`
+
+Vision output is checked before entering the world-state layer.
+
+Invalid results are rejected when:
+
+- the result is not a mapping
+- required fields are missing
+- confidence is outside `[0, 1]`
+- blocks/entities are not sequences
+- player/UI are not mappings
+
+This prevents malformed model output from becoming trusted runtime state.
+
+## Safe real-Minecraft workflow
+
+```text
+1. Start Minecraft in a dedicated test world
+2. Start Qynl in dry-run mode
+3. Verify screen capture
+4. Verify vision output + confidence
+5. Verify world-state extraction
+6. Verify keyboard/mouse adapter without autonomous actions
+7. Test Force ESC / emergency stop
+8. Run short bounded sessions
+9. Inspect traces and verification results
+10. Only then enable autonomous input
+```
+
+Do not run an untested adapter unattended.
+
+## Safety boundary
+
+```text
+AI / memory / learning
+        ↓
+candidate decision
+        ↓
+typed Minecraft action
+        ↓
+confidence + freshness
+        ↓
+V30 decision gate
+        ↓
+V31 validator
+        ↓
+V50 safety supervisor
+        ↓
+V22 pacing guard
+        ↓
+watchdog / Force ESC
+        ↓
+Production Input Adapter
+        ↓
+Minecraft
+```
+
+Screen capture, vision, world-state extraction and input adapters do not bypass the safety supervisor.
 
 ## Tests
 
-`evals/test_v27.py` verifies:
+`evals/test_v28_adapters.py` verifies:
 
-- low confidence produces no movement decision
-- runtime uses bounded pathfinding
-- emergency stop pauses the runtime
-
-The V2.6 regression suite remains part of the project as well.
-
-## Real Minecraft setup
-
-V2.7 provides the runtime boundary, but **the repository is not claiming plug-and-play autonomous Minecraft gameplay yet**. To use it in a real session, a deployment still needs:
-
-- a reliable screen/vision observer
-- a Minecraft-aware `InputAdapter`
-- model/provider configuration
-- world-state extraction
-- environment-aware movement handling
-- the existing V30/V31/V50 safety stack
-
-Start with a dedicated test world and dry-run mode. Do not connect a new input adapter directly to an unattended survival world before it has passed deterministic and short-session tests.
+- production observations are converted into structured state
+- emergency stop propagates
+- invalid vision confidence is rejected
+- temporal position changes are detected
 
 ## Versioning
-
-V50 remains the major architecture milestone. The public product line continues from V2.0.
 
 ```text
 V2.0 = V50 architecture baseline
@@ -149,6 +211,7 @@ V2.2 = debugability + progress measurement + pacing
 V2.5 = gameplay reliability + navigation/recovery foundations
 V2.6 = pathfinding + navigation feedback
 V2.7 = usable runtime boundary
+V2.8 = production screen/input/world-state adapters
 V3.0 = only for a genuinely major architectural change
 ```
 
@@ -172,7 +235,7 @@ Linux/macOS:
 source .venv/bin/activate
 ```
 
-Install the dependencies specified by the repository's dependency files.
+Install the repository dependencies. If you use the reference desktop adapters, install their optional packages as documented by the project.
 
 For the TSX desktop app:
 
@@ -182,74 +245,11 @@ npm install
 npm run dev
 ```
 
-Use the scripts in `apps/desktop/package.json` if the project defines different commands.
-
-## Safe first run
-
-Start with:
-
-```text
-QYNL_DRY_RUN=1
-```
-
-Then verify capture, perception, planning, pathfinding, action validation, navigation, recovery, watchdog, Force ESC, missions, telemetry and V50 safety before enabling real Minecraft input.
-
-## Safety boundary
-
-```text
-AI / memory / learning
-        ↓
-candidate decision
-        ↓
-typed Minecraft action
-        ↓
-confidence + freshness
-        ↓
-V30 decision gate
-        ↓
-V31 validator
-        ↓
-V50 safety supervisor
-        ↓
-V22 pacing guard
-        ↓
-watchdog / Force ESC
-        ↓
-Input Adapter
-        ↓
-Minecraft
-```
-
-Planning, pathfinding and recovery do not bypass execution validation or the safety supervisor.
-
-## Project structure
-
-```text
-AgentQynl/
-├── apps/desktop/
-├── core/
-├── minecraft/
-│   ├── v20_*.py
-│   ├── v21_*.py
-│   ├── v22_*.py
-│   ├── v23_*.py
-│   ├── v24_*.py
-│   ├── v25_*.py
-│   ├── v26_*.py
-│   ├── v27_*.py
-│   ├── v30_*.py
-│   ├── v31_*.py
-│   ├── v50_*.py
-│   └── executor.py
-├── memory/
-├── safety/
-├── evals/
-└── docs/
-```
-
 ## Limitations
 
-V2.7 makes the core runtime practical to integrate, but it does not claim human-level Minecraft gameplay or fully solve vision, combat, inventory management, crafting, terrain physics or arbitrary-world navigation. Those capabilities require their own tested Minecraft-specific systems.
+V2.8 provides the real desktop integration boundary, but it does **not** claim perfect Minecraft perception or gameplay. A vision model still has to reliably infer Minecraft state from frames, and Minecraft-specific movement, combat, inventory, crafting and interaction policies still need dedicated tested implementations.
+
+The production architecture is intentionally incremental: observe → validate → decide → safely act → observe again.
 
 ## License
 
