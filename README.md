@@ -1,20 +1,22 @@
-# Qynl Agent V2.6
+# Qynl Agent V2.7
 
 Qynl is a **Minecraft-only autonomous AI agent** with visual perception, temporal state, hierarchical planning, persistent world state, verified learning, mission-level autonomy, recovery, typed actions, deterministic evaluation and explicit runtime safety.
 
-## V2.6: Pathfinding + Navigation Intelligence
+## V2.7: Usable Minecraft Runtime
 
-V2.6 is the navigation-focused release. It adds a bounded A* pathfinding primitive, path scoring, navigation-step generation and stuck detection while keeping the V50 safety architecture underneath execution.
+V2.7 turns the V2.6 navigation primitives into a bounded runtime loop that can be wired to a real Minecraft input adapter. The release focuses on the practical boundary between AI decisions and actual Minecraft control.
 
-### V2.6 additions
+### V2.7 additions
 
-- bounded 3D A* pathfinding
-- blocked-cell avoidance
-- expansion limits
-- path length/risk scoring
-- path-to-navigation-step bridge
-- navigation stall detection
-- expanded Minecraft regression tests
+- practical runtime controller
+- injectable Minecraft input adapter
+- bounded observe → decide → execute → verify session loop
+- low-confidence input suppression
+- runtime pause/resume
+- emergency-stop integration
+- movement verification
+- navigation-stall handling
+- runtime regression tests
 
 ## Core control loop
 
@@ -23,141 +25,118 @@ MINECRAFT
     ↓
 OBSERVE
     ↓
-STATE / WORLD MODEL
+CONFIDENCE CHECK
     ↓
-MISSION
+WORLD STATE
     ↓
-PLAN
+MISSION / GOAL
     ↓
-PATHFIND
-    ↓
-SCORE PATH
+PLAN + PATHFIND
     ↓
 TRACE DECISION
     ↓
 SAFETY
     ↓
-PACE ACTION
+EXECUTE ONE STEP
     ↓
-EXECUTE
+FRESH OBSERVATION
     ↓
 VERIFY
     ↓
-STUCK CHECK
+PROGRESS / STUCK CHECK
     ↓
-PROGRESS
-    ↓
-LEARN / RECOVER / REPLAN
+CONTINUE / REOBSERVE / REPLAN / STOP
 ```
 
 The core rule remains: **the model can propose; the runtime decides.**
 
-## V2.6 components
+## V2.7 runtime
 
-### Bounded A* pathfinding
+`minecraft/v27_runtime.py`
 
-`minecraft/v26_pathfinding.py`
+`MinecraftRuntime` provides the execution boundary. It accepts an injected `InputAdapter` instead of directly depending on a keyboard/mouse library.
 
-The new pathfinder searches a discrete 3D grid using A* and a configurable expansion budget.
-
-```text
-start
-  ↓
-known blocked cells
-  ↓
-A*
-  ↓
-path / failure
-```
-
-The expansion limit is deliberate. A bad or huge path request cannot consume unbounded compute.
-
-### Path navigation
-
-`minecraft/v26_navigation.py`
-
-Converts a planned path into the next bounded navigation step. The path planner does not directly bypass the existing executor or safety layers.
-
-### Stuck detection
-
-`minecraft/v26_stuck_detector.py`
-
-Tracks repeated observations with no movement and signals when navigation has stalled.
-
-The detector does not issue input itself. It feeds the existing recovery/replanning system.
-
-### Path scoring
-
-`minecraft/v26_path_cost.py`
-
-Provides a small scoring primitive based on path length and bounded risk. This lets higher-level planning compare candidate routes rather than blindly selecting the first valid route.
-
-## V2.6 navigation architecture
+The adapter must provide:
 
 ```text
-           WORLD OBSERVATION
-                  ↓
-          ┌───────────────┐
-          │ World / State │
-          └───────┬───────┘
-                  ↓
-          ┌───────────────┐
-          │   A* Search   │
-          └───────┬───────┘
-                  ↓
-             candidate paths
-                  ↓
-          ┌───────────────┐
-          │ Path Scoring  │
-          └───────┬───────┘
-                  ↓
-            selected route
-                  ↓
-          ┌───────────────┐
-          │ Next Nav Step │
-          └───────┬───────┘
-                  ↓
-             SAFETY STACK
-                  ↓
-              EXECUTION
-                  ↓
-              VERIFY
-             ↙       ↘
-          moved      stalled
-            ↓           ↓
-         continue    recover/replan
+move(dx, dy, dz)
+stop()
+emergency_stop()
 ```
 
-## Important limitation
+This keeps the AI/planning layer separate from real input and makes the runtime testable without controlling a real Minecraft window.
 
-V2.6's pathfinder is a **planning primitive**, not a finished Minecraft movement controller.
+### Low-confidence behavior
 
-Real Minecraft navigation still needs environment-aware handling for things such as:
+If observation confidence falls below the runtime threshold, Qynl returns:
 
-- collision geometry
-- jumping and falling
-- terrain height changes
-- water and lava
-- ladders and climbing
-- doors and interactable blocks
-- dynamic entities
-- newly discovered obstacles
-- path invalidation after world changes
+```text
+reobserve
+```
 
-The correct architecture is therefore **plan → execute one bounded step → observe → verify → replan**, rather than blindly executing an entire path.
+and does not generate movement input.
+
+### Emergency stop
+
+`emergency_stop()` pauses the runtime and forwards the stop request to the adapter. While paused, decisions are `stop` until an explicit resume occurs.
+
+## Bounded session loop
+
+`minecraft/v27_session.py`
+
+The session controller repeatedly:
+
+1. obtains a fresh observation
+2. makes one bounded decision
+3. executes at most one navigation step
+4. obtains another observation
+5. verifies movement
+6. continues, replans or stops
+
+A maximum step budget prevents an unattended session loop from running forever.
+
+## Pathfinding
+
+V2.7 uses the V2.6 navigation stack:
+
+```text
+World observation
+      ↓
+bounded A*
+      ↓
+path scoring
+      ↓
+next path node
+      ↓
+V50 safety
+      ↓
+input adapter
+```
+
+The path is never blindly executed as one giant command. Minecraft is dynamic, so every step is followed by fresh observation.
 
 ## Tests
 
-`evals/test_v26.py` covers both existing V2.6 mission/recovery behavior and the new navigation layer:
+`evals/test_v27.py` verifies:
 
-- A* routes around blocked cells
-- A* respects its expansion budget
-- navigation selects the next path node
-- stuck detector triggers after repeated no-progress observations
-- path-risk values are bounded
-- mission lifecycle
-- verified mission memory
-- recovery escalation
+- low confidence produces no movement decision
+- runtime uses bounded pathfinding
+- emergency stop pauses the runtime
+
+The V2.6 regression suite remains part of the project as well.
+
+## Real Minecraft setup
+
+V2.7 provides the runtime boundary, but **the repository is not claiming plug-and-play autonomous Minecraft gameplay yet**. To use it in a real session, a deployment still needs:
+
+- a reliable screen/vision observer
+- a Minecraft-aware `InputAdapter`
+- model/provider configuration
+- world-state extraction
+- environment-aware movement handling
+- the existing V30/V31/V50 safety stack
+
+Start with a dedicated test world and dry-run mode. Do not connect a new input adapter directly to an unattended survival world before it has passed deterministic and short-session tests.
 
 ## Versioning
 
@@ -169,6 +148,7 @@ V2.1 = observation + feedback reliability
 V2.2 = debugability + progress measurement + pacing
 V2.5 = gameplay reliability + navigation/recovery foundations
 V2.6 = pathfinding + navigation feedback
+V2.7 = usable runtime boundary
 V3.0 = only for a genuinely major architectural change
 ```
 
@@ -206,37 +186,13 @@ Use the scripts in `apps/desktop/package.json` if the project defines different 
 
 ## Safe first run
 
-Start in dry-run mode:
+Start with:
 
 ```text
 QYNL_DRY_RUN=1
 ```
 
 Then verify capture, perception, planning, pathfinding, action validation, navigation, recovery, watchdog, Force ESC, missions, telemetry and V50 safety before enabling real Minecraft input.
-
-Use a dedicated test world for early sessions.
-
-## Testing philosophy
-
-```text
-change
- ↓
-unit tests
- ↓
-deterministic benchmark
- ↓
-dry run
- ↓
-short real mission
- ↓
-measure
- ↓
-fix
- ↓
-repeat
-```
-
-Benchmarks are regression barriers, not proof of human-level Minecraft gameplay.
 
 ## Safety boundary
 
@@ -259,10 +215,12 @@ V22 pacing guard
         ↓
 watchdog / Force ESC
         ↓
+Input Adapter
+        ↓
 Minecraft
 ```
 
-Pathfinding, navigation and recovery can recommend what should happen next, but they do not bypass execution validation or the safety supervisor.
+Planning, pathfinding and recovery do not bypass execution validation or the safety supervisor.
 
 ## Project structure
 
@@ -278,6 +236,7 @@ AgentQynl/
 │   ├── v24_*.py
 │   ├── v25_*.py
 │   ├── v26_*.py
+│   ├── v27_*.py
 │   ├── v30_*.py
 │   ├── v31_*.py
 │   ├── v50_*.py
@@ -290,7 +249,7 @@ AgentQynl/
 
 ## Limitations
 
-V2.6 significantly improves navigation planning, but it does not claim arbitrary-terrain autonomous Minecraft movement. Real performance still depends on perception quality, world-state accuracy, model quality, latency, input handling and reliable verification.
+V2.7 makes the core runtime practical to integrate, but it does not claim human-level Minecraft gameplay or fully solve vision, combat, inventory management, crafting, terrain physics or arbitrary-world navigation. Those capabilities require their own tested Minecraft-specific systems.
 
 ## License
 
