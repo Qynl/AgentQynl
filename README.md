@@ -1,17 +1,19 @@
-# Qynl Agent V2.2
+# Qynl Agent V2.5
 
 Qynl is a **Minecraft-only autonomous AI agent** with visual perception, temporal state, hierarchical planning, persistent world state, verified learning, mission-level autonomy, recovery, typed actions, deterministic evaluation and explicit runtime safety.
 
-## V2.2: Debuggable, Measurable Runtime
+## V2.5: Gameplay Reliability Update
 
-V2.2 builds on the V50 architecture and V2.1 reliability work. The goal is not another rewrite. It makes Qynl's decisions easier to inspect, mission progress easier to measure, and action execution more deliberately paced.
+V2.5 builds on the V50 architecture and the V2.1/V2.2 reliability work. This release focuses on practical Minecraft behavior: navigation targets, bounded recovery and better regression testing.
 
-### V2.2 additions
+### V2.5 additions
 
-- bounded decision traces
-- mission progress regression detection
-- action pacing guard
-- expanded regression coverage
+- bounded waypoint navigation helper
+- explicit arrival detection
+- confidence-aware recovery
+- mission-regression recovery
+- bounded retry budgets
+- Minecraft-specific regression tests
 
 ## Core control loop
 
@@ -38,41 +40,77 @@ VERIFY
     ↓
 TRACK PROGRESS
     ↓
-LEARN / RECOVER / REPLAN
+NAVIGATE / RECOVER / REPLAN
+    ↓
+LEARN
 ```
 
 The core rule remains: **the model can propose; the runtime decides.**
 
-## V2.2 components
+## V2.5 components
 
-### Decision traces
+### Navigation
 
-`minecraft/v22_decision_trace.py`
+`minecraft/v25_navigation.py`
 
-Stores a bounded history of chosen action, confidence, short reason and timestamp. This makes long-session debugging practical without allowing an unbounded in-memory log.
+V2.5 introduces a small deterministic navigation layer for waypoint-based tasks.
 
-### Mission progress tracker
+A waypoint contains:
 
-`minecraft/v22_progress_tracker.py`
+- X coordinate
+- Y coordinate
+- Z coordinate
+- optional name
 
-Normalizes mission progress to `[0, 1]`, calculates change since the previous observation, and flags meaningful regressions. A regression is a signal for verification/recovery, not automatic proof that the world is broken.
+The navigator calculates distance and distinguishes between:
 
-### Action pacing
+```text
+arrived
+move_to_waypoint
+```
 
-`minecraft/v22_action_cooldown.py`
+This is intentionally a navigation primitive, not a claim that Qynl can already pathfind perfectly around arbitrary Minecraft terrain. Higher-level pathfinding can build on it.
 
-Adds a small configurable minimum interval between action marks to reduce runaway input loops. This is a pacing guard, not a substitute for the V30/V31/V50 safety layers.
+### Recovery policy
+
+`minecraft/v25_recovery.py`
+
+Recovery now considers three signals:
+
+- consecutive action failures
+- mission progress regression
+- perception confidence
+
+Possible decisions are:
+
+```text
+continue
+retry_once
+replan
+reobserve
+```
+
+A bounded retry budget prevents an agent from repeating a failed action forever.
+
+### Tests
+
+`evals/test_v25.py` covers:
+
+- waypoint arrival
+- distant waypoint handling
+- low-confidence recovery
+- progress-regression replanning
+- retry-budget exhaustion
 
 ## Versioning
 
-V50 remains the major architecture milestone. V2.1 and V2.2 are the new product/versioning line built on that architecture.
+V50 remains the major architecture milestone. The public product line continues from V2.0 without carrying the old V50 number into every release.
 
 ```text
 V2.0 = V50 architecture baseline
 V2.1 = observation + feedback reliability
 V2.2 = debugability + progress measurement + pacing
-V2.3 = next incremental improvement
-...
+V2.5 = gameplay reliability + navigation + recovery
 V3.0 = only for a genuinely major architectural change
 ```
 
@@ -96,7 +134,7 @@ Linux/macOS:
 source .venv/bin/activate
 ```
 
-Then install the dependencies specified by the repository's dependency files.
+Install the dependencies specified by the repository's dependency files.
 
 For the TSX desktop app:
 
@@ -116,7 +154,7 @@ Start in dry-run mode:
 QYNL_DRY_RUN=1
 ```
 
-Then verify capture, perception, planning, action validation, watchdog, Force ESC, missions, telemetry and V50 safety before enabling real Minecraft input.
+Then verify capture, perception, planning, action validation, navigation, recovery, watchdog, Force ESC, missions, telemetry and V50 safety before enabling real Minecraft input.
 
 Use a dedicated test world for early sessions.
 
@@ -166,7 +204,7 @@ watchdog / Force ESC
 Minecraft
 ```
 
-Learning and memory do not bypass execution safety.
+Navigation and recovery can recommend what should happen next, but they do not bypass the safety supervisor or execution validation.
 
 ## Project structure
 
@@ -180,6 +218,7 @@ AgentQynl/
 │   ├── v22_*.py
 │   ├── v23_*.py
 │   ├── v24_*.py
+│   ├── v25_*.py
 │   ├── v26_*.py
 │   ├── v30_*.py
 │   ├── v31_*.py
@@ -193,7 +232,7 @@ AgentQynl/
 
 ## Limitations
 
-V2.2 improves observability and runtime discipline. It does not by itself guarantee strong autonomous Minecraft gameplay. Real performance still depends on perception quality, model quality, latency, input handling and reliable verification.
+V2.5 improves navigation and recovery primitives. It does not by itself guarantee strong autonomous Minecraft gameplay or solve arbitrary terrain pathfinding. Real performance still depends on perception quality, model quality, latency, input handling and reliable verification.
 
 ## License
 
