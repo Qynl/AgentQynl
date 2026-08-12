@@ -1,3 +1,9 @@
-# Optional semantic Minecraft vision
+# Deterministic screen vision
 opencv-python>=4.10.0
 numpy>=2.0.0
+
+# Optional OCR for Minecraft tooltips/chat/item text
+pytesseract>=0.3.13
+
+# NVIDIA NIM adapter uses Python stdlib HTTP and needs no SDK.
+# Run a compatible NIM VLM separately and point Qynl at its /v1 endpoint.
