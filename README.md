@@ -2,23 +2,25 @@
 
 Qynl is a **Minecraft-only autonomous AI agent** with visual perception, temporal state, hierarchical planning, persistent world state, verified learning, mission-level autonomy, recovery, typed actions, deterministic evaluation and explicit runtime safety.
 
-## V2.8: Production Adapter Layer
+## V2.8: Production Minecraft Vision
 
-V2.8 adds the production boundary between the agent and a real Minecraft desktop session: screen capture, vision analysis, keyboard/mouse input, and temporal world-state extraction are now represented by explicit interfaces.
-
-The design deliberately keeps platform-specific dependencies outside the AI core.
+V2.8 now contains the production adapter boundary **and a Minecraft-focused vision layer**. Screen frames can be passed through deterministic CV for cheap, explainable geometry signals and through an optional semantic vision backend for richer scene understanding.
 
 ### V2.8 additions
 
 - production screen-capture interface
 - optional MSS screen backend
 - optional PyAutoGUI input backend
-- strict vision-result schema validation
-- structured world-state extraction
+- Minecraft crosshair detection hint
+- Minecraft HUD region extraction
+- hotbar/health/food region metadata
+- inventory-region metadata
+- structured block/entity detection schema
+- optional semantic vision backend interface
+- strict vision-result validation
 - temporal world-state delta tracking
 - emergency-stop propagation
-- bounded key tap duration
-- adapter regression tests
+- adapter and vision regression tests
 
 ## Real-session architecture
 
@@ -27,56 +29,80 @@ MINECRAFT WINDOW
       ↓
 SCREEN CAPTURE
       ↓
-VISION BACKEND
-      ↓
-VALIDATED WORLD STATE
-      ↓
-TEMPORAL STATE TRACKER
-      ↓
-MISSION / PLAN / PATHFIND
-      ↓
-V30 / V31 / V50 SAFETY
-      ↓
-PRODUCTION INPUT ADAPTER
-      ↓
-KEYBOARD / MOUSE
-      ↓
-MINECRAFT
-      ↓
-NEW SCREEN FRAME
-      ↺
+┌──────────────────────────────┐
+│ Minecraft Vision              │
+│                              │
+│ deterministic CV + model CV │
+└──────────────┬───────────────┘
+               ↓
+       VALIDATED WORLD STATE
+               ↓
+       TEMPORAL STATE TRACKER
+               ↓
+       MISSION / PLAN / PATHFIND
+               ↓
+          V30 / V31 / V50
+               ↓
+       PRODUCTION INPUT
+               ↓
+        KEYBOARD / MOUSE
+               ↓
+           MINECRAFT
+               ↓
+          NEW FRAME ↺
 ```
 
 The core rule remains: **the model can propose; the runtime decides.**
 
-## Production adapter
+## Minecraft vision
 
-`minecraft/v28_production_adapter.py`
+`minecraft/v28_minecraft_vision.py`
 
-Defines three injected interfaces:
+`MinecraftVision` is the deterministic baseline. It extracts information that can be justified from pixels and deliberately leaves information unknown when a screenshot cannot establish it reliably.
+
+### Crosshair
+
+The detector inspects the center of the frame for a high-contrast crosshair hint and returns its pixel location and confidence.
+
+This is a **hint**, not a guarantee that the server/client uses the vanilla crosshair.
+
+### HUD
+
+The baseline provides Minecraft-oriented regions for:
+
+- hotbar
+- health
+- food
+
+These are geometry signals. Exact hearts, hunger values, item names and counts require a semantic/UI recognition backend.
+
+### Inventory
+
+The baseline exposes the expected center inventory region but returns `open: null` until a classifier/model can actually establish whether an inventory screen is open.
+
+### Player position
+
+A screenshot alone does **not** provide authoritative 3D world coordinates. V2.8 therefore returns:
 
 ```text
-ScreenCapture
-MinecraftInput
-VisionBackend
+position = null
+yaw = null
+pitch = null
 ```
 
-The `ProductionAdapter` turns them into a structured `WorldState` and exposes controlled input primitives.
+until a world-state/depth backend supplies them. Qynl does not fabricate coordinates from a 2D image.
 
-### Screen
+## Semantic vision backend
 
-A `ScreenFrame` contains:
+`minecraft/v28_vision_backends.py`
 
-- image/frame object
-- monotonic timestamp
-- width
-- height
+The runtime accepts a small injectable interface:
 
-Timestamps are checked so stale/out-of-order frames cannot silently become the newest world state.
+```python
+image + system_prompt → structured JSON
+```
 
-### Vision
-
-The vision backend returns:
+The backend must return:
 
 ```text
 confidence
@@ -86,43 +112,29 @@ entities
 ui
 ```
 
-Confidence is bounded to `[0, 1]` before entering the runtime.
+`validate_vision_result()` rejects malformed or unsafe schema output before it becomes trusted state.
 
-### Input
+This makes the vision provider replaceable. A local model, NVIDIA-backed vision service, or another compatible provider can be connected without changing the Minecraft runtime.
 
-The input interface supports:
+## Production adapter
+
+`minecraft/v28_production_adapter.py`
+
+Defines:
 
 ```text
-key_down()
-key_up()
-mouse_move()
-mouse_button()
-emergency_stop()
+ScreenCapture
+MinecraftInput
+VisionBackend
 ```
 
-`stop()` releases the movement keys used by the adapter. `emergency_stop()` additionally forwards the emergency-stop event to the backend.
-
-## Reference desktop backends
-
-`minecraft/v28_backends.py`
-
-### MSS
-
-`MSSScreenCapture` uses the optional `mss` package for desktop capture. The dependency is imported lazily, so installations that do not use this backend do not need to import it.
-
-### PyAutoGUI
-
-`PyAutoGUIInput` uses the optional `pyautogui` package for keyboard/mouse control. It tracks pressed keys so emergency stop can release them.
-
-PyAutoGUI's failsafe is enabled by the adapter.
-
-These are **reference transport adapters**, not a claim that every Minecraft version/window configuration is automatically solved.
+The adapter now validates every vision result before producing `WorldState`.
 
 ## World-state extraction
 
 `minecraft/v28_world_state.py`
 
-`WorldStateTracker` compares consecutive observations and produces a compact delta:
+Consecutive observations produce:
 
 ```text
 position_changed
@@ -130,40 +142,16 @@ visible_block_count_delta
 entity_count_delta
 ```
 
-This gives the planner/runtime a temporal signal rather than treating every screenshot as an isolated image.
+This lets the planner reason over change instead of treating every screenshot as an isolated image.
 
-## Vision schema validation
+## Reference desktop backends
 
-`minecraft/v28_vision_schema.py`
+`minecraft/v28_backends.py`
 
-Vision output is checked before entering the world-state layer.
+- `MSSScreenCapture` for desktop capture
+- `PyAutoGUIInput` for keyboard/mouse transport
 
-Invalid results are rejected when:
-
-- the result is not a mapping
-- required fields are missing
-- confidence is outside `[0, 1]`
-- blocks/entities are not sequences
-- player/UI are not mappings
-
-This prevents malformed model output from becoming trusted runtime state.
-
-## Safe real-Minecraft workflow
-
-```text
-1. Start Minecraft in a dedicated test world
-2. Start Qynl in dry-run mode
-3. Verify screen capture
-4. Verify vision output + confidence
-5. Verify world-state extraction
-6. Verify keyboard/mouse adapter without autonomous actions
-7. Test Force ESC / emergency stop
-8. Run short bounded sessions
-9. Inspect traces and verification results
-10. Only then enable autonomous input
-```
-
-Do not run an untested adapter unattended.
+These are transport adapters. They do not pretend to solve Minecraft semantics themselves.
 
 ## Safety boundary
 
@@ -191,16 +179,31 @@ Production Input Adapter
 Minecraft
 ```
 
-Screen capture, vision, world-state extraction and input adapters do not bypass the safety supervisor.
+Vision, pathfinding and world-state extraction cannot bypass execution safety.
+
+## Safe real-Minecraft workflow
+
+```text
+1. Dedicated test world
+2. Dry-run
+3. Verify screen capture
+4. Verify deterministic CV
+5. Verify semantic vision + schema
+6. Verify world-state deltas
+7. Test Force ESC
+8. Short bounded real sessions
+9. Inspect traces and verification
+10. Increase autonomy gradually
+```
+
+Do not run an untested adapter unattended.
 
 ## Tests
 
-`evals/test_v28_adapters.py` verifies:
+- `evals/test_v28_adapters.py`
+- `evals/test_v28_vision.py`
 
-- production observations are converted into structured state
-- emergency stop propagates
-- invalid vision confidence is rejected
-- temporal position changes are detected
+Coverage includes adapter observations, emergency stop, malformed vision output, temporal state changes and semantic backend validation.
 
 ## Versioning
 
@@ -211,7 +214,7 @@ V2.2 = debugability + progress measurement + pacing
 V2.5 = gameplay reliability + navigation/recovery foundations
 V2.6 = pathfinding + navigation feedback
 V2.7 = usable runtime boundary
-V2.8 = production screen/input/world-state adapters
+V2.8 = production adapters + Minecraft vision
 V3.0 = only for a genuinely major architectural change
 ```
 
@@ -235,7 +238,7 @@ Linux/macOS:
 source .venv/bin/activate
 ```
 
-Install the repository dependencies. If you use the reference desktop adapters, install their optional packages as documented by the project.
+Install the repository dependencies. For the vision baseline, install the optional packages from `requirements-vision.txt`.
 
 For the TSX desktop app:
 
@@ -247,9 +250,11 @@ npm run dev
 
 ## Limitations
 
-V2.8 provides the real desktop integration boundary, but it does **not** claim perfect Minecraft perception or gameplay. A vision model still has to reliably infer Minecraft state from frames, and Minecraft-specific movement, combat, inventory, crafting and interaction policies still need dedicated tested implementations.
+V2.8 is now a real screen-to-structured-state foundation, but it does **not** claim perfect Minecraft perception. Exact 3D coordinates, block identity, entity identity, health values, inventory contents and semantic interactions require a trained/connected vision backend or game-state source.
 
-The production architecture is intentionally incremental: observe → validate → decide → safely act → observe again.
+The architecture intentionally follows:
+
+**observe → validate → decide → safely act → observe again**
 
 ## License
 
