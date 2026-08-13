@@ -1,9 +1,10 @@
 package qynl.agent;
 
 import net.fabricmc.api.ModInitializer;
-import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import org.slf4j.Logger;
@@ -16,12 +17,13 @@ public final class AgentQynlMod implements ModInitializer {
     private static final CompanionBridge BRIDGE = new CompanionBridge();
 
     @Override public void onInitialize() {
-        ServerLifecycleEvents.SERVER_STARTED.register(s -> { server = s; BRIDGE.start(s); LOGGER.info("Qynl companion bridge ready on localhost"); });
-        ServerLifecycleEvents.SERVER_STOPPING.register(s -> { BRIDGE.stop(); server = null; });
+        CompanionCommandRouter.register();
+        ServerLifecycleEvents.SERVER_STARTED.register(s -> { server=s; BRIDGE.start(s); LOGGER.info("Qynl autonomous companion ready"); });
+        ServerLifecycleEvents.SERVER_STOPPING.register(s -> { BRIDGE.stop(); server=null; });
+        ServerTickEvents.END_SERVER_TICK.register(s -> { QynlEntity q=CompanionManager.get(); if(q!=null && !q.isRemoved()) q.tick(); });
         ServerPlayConnectionEvents.JOIN.register((handler, sender, s) -> BRIDGE.onPlayerJoin(handler.getPlayer()));
         ServerPlayConnectionEvents.DISCONNECT.register((handler, s) -> BRIDGE.onPlayerLeave(handler.getPlayer()));
         ServerMessageEvents.CHAT_MESSAGE.register((message, player, params) -> BRIDGE.onChat(player, message.getContent().getString()));
     }
-
     public static MinecraftServer server() { return server; }
 }
