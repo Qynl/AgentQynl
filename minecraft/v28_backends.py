@@ -1,9 +1,4 @@
-"""Reference backends for V2.8 production integration.
-
-Optional dependencies are imported lazily. Install only the backend(s) you
-intend to use. These adapters do not contain Minecraft-specific automation
-logic; they only translate OS/window primitives into the production boundary.
-"""
+"""Reference backends for V2.8 production integration."""
 from __future__ import annotations
 from .v28_production_adapter import ScreenFrame
 
@@ -12,8 +7,7 @@ class MSSScreenCapture:
         self.monitor = monitor
 
     def capture(self) -> ScreenFrame:
-        import mss
-        import time
+        import mss, time
         with mss.mss() as sct:
             monitor = self.monitor or sct.monitors[1]
             shot = sct.grab(monitor)
@@ -39,7 +33,11 @@ class PyAutoGUIInput:
         self._pyautogui.moveRel(dx, dy, duration=0)
 
     def mouse_button(self, button: str, down: bool) -> None:
-        (self._pyautogui.mouseDown if down else self._pyautogui.mouseUp)(button=button)
+        fn = self._pyautogui.mouseDown if down else self._pyautogui.mouseUp
+        fn(button=button)
+
+    def scroll(self, clicks: int) -> None:
+        self._pyautogui.scroll(int(clicks))
 
     def emergency_stop(self) -> None:
         for key in tuple(self._pressed):
