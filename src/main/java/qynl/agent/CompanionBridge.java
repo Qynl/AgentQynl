@@ -1,30 +1,8 @@
 package qynl.agent;
-
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.text.Text;
-import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
-
-/** Local companion bridge and safe Minecraft-chat command gateway. */
-public final class CompanionBridge {
-    private final AtomicBoolean running = new AtomicBoolean(false);
-    private MinecraftServer server;
-    private String token;
-    public void start(MinecraftServer server) { this.server=server; token=UUID.randomUUID().toString(); running.set(true); AgentQynlMod.LOGGER.info("Qynl autonomous companion ready"); }
-    public void stop() { running.set(false); server=null; token=null; }
-    public boolean isRunning() { return running.get(); }
-    public void onPlayerJoin(ServerPlayerEntity player) { if(running.get()) player.sendMessage(Text.literal("[Qynl] I'm online. Use /qynl spawn or @qynl follow me."),false); }
-    public void onPlayerLeave(ServerPlayerEntity player) { }
-
-    public void onChat(ServerPlayerEntity player, String text) {
-        if(!running.get() || !text.startsWith("@qynl ")) return;
-        String command=text.substring(6).trim().toLowerCase();
-        if(command.equals("spawn") || command.equals("come here") || command.equals("come_here")) CompanionManager.goal("come_here",player);
-        else if(command.equals("follow") || command.equals("follow me")) CompanionManager.goal("follow",player);
-        else if(command.equals("stay") || command.equals("stay here")) CompanionManager.goal("stay",player);
-        else if(command.equals("stop")) CompanionManager.goal("stop",player);
-        else player.sendMessage(Text.literal("[Qynl] I understand: follow, stay, come here, stop, spawn. Full Ollama task planning can extend this safely."),false);
-    }
-    public String sessionToken() { return token; }
+import com.mojang.brigadier.CommandDispatcher;import net.minecraft.server.command.ServerCommandSource;import net.minecraft.server.network.ServerPlayerEntity;import net.minecraft.text.Text;import static net.minecraft.server.command.CommandManager.literal;
+public final class CompanionBridge{
+ private CompanionBridge(){}
+ public static void handleChat(ServerPlayerEntity p,String text){if(!text.toLowerCase().startsWith("@qynl"))return;String x=text.substring(5).trim().toLowerCase();if(x.equals("spawn")){CompanionManager.spawn(p.getServer(),p);return;}if(x.contains("follow")||x.contains("folg")){CompanionManager.goal("follow",p);return;}if(x.contains("come")||x.contains("komm")){CompanionManager.goal("come_here",p);return;}if(x.contains("stay")||x.contains("bleib")){CompanionManager.goal("stay",p);return;}if(x.equals("stop")||x.contains("stopp")){CompanionManager.goal("stop",p);return;}if(x.contains("wood")||x.contains("holz")){CompanionManager.goal("gather_wood",p);return;}if(x.contains("stone")||x.contains("stein")){CompanionManager.goal("gather_stone",p);return;}if(x.contains("iron")||x.contains("eisen")){CompanionManager.goal("mine",p);return;}if(x.contains("food")||x.contains("essen")){CompanionManager.goal("eat",p);return;}if(x.contains("fight")||x.contains("kämpf")){CompanionManager.goal("attack",p);return;}if(x.contains("explore")||x.contains("erkund")){CompanionManager.goal("explore",p);return;}if(x.contains("craft")){CompanionManager.goal("craft",p);return;}if(x.contains("build")||x.contains("bau")){CompanionManager.goal("build",p);return;}p.sendMessage(Text.literal("[Qynl] Try: follow, wood, stone, food, fight, explore, craft, build, stay, stop."),false);}
+ public static void registerCommands(CommandDispatcher<ServerCommandSource> d){d.register(literal("qynl").then(literal("spawn").executes(c->{ServerPlayerEntity p=c.getSource().getPlayer();CompanionManager.spawn(c.getSource().getServer(),p);return 1;})).then(literal("follow").executes(c->{CompanionManager.goal("follow",c.getSource().getPlayer());return 1;})).then(literal("stay").executes(c->{CompanionManager.goal("stay",c.getSource().getPlayer());return 1;})).then(literal("stop").executes(c->{CompanionManager.goal("stop",c.getSource().getPlayer());return 1;})).then(literal("explore").executes(c->{CompanionManager.goal("explore",c.getSource().getPlayer());return 1;})));
+ }
 }

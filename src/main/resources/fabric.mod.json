@@ -3,14 +3,9 @@
   "id": "agentqynl",
   "version": "${version}",
   "name": "AgentQynl",
-  "description": "Qynl autonomous Minecraft co-op companion.",
+  "description": "Autonomous Minecraft co-op AI companion powered by local Ollama.",
   "authors": ["Qynl"],
   "environment": "*",
-  "entrypoints": { "main": ["qynl.agent.AgentQynlMod"] },
-  "depends": {
-    "fabricloader": ">=0.16.0",
-    "minecraft": "~1.21.1",
-    "java": ">=21",
-    "fabric-api": "*"
-  }
+  "entrypoints": {"main":["qynl.agent.AgentQynlMod"],"client":["qynl.agent.client.AgentQynlClient"]},
+  "depends": {"fabricloader":">=0.16.0","minecraft":"~1.21.1","java":">=21","fabric-api":"*"}
 }
