@@ -1,264 +1,180 @@
-# Qynl Agent V3.5
+# Qynl Agent V3.6
 
-Qynl is a **Minecraft-only autonomous AI agent** built around screen perception, semantic vision, temporal state, hierarchical planning, pathfinding, bounded actions, verification, recovery and explicit runtime safety.
+Qynl is a **Minecraft-only autonomous AI agent** built around screen perception, semantic vision, temporal state, hierarchical planning, pathfinding, a rich typed action language, verification, recovery and explicit runtime safety.
 
-## V3.5: Playable Closed-Loop Runtime
+## V3.6: Full Minecraft Action Layer
 
-V3.5 is the big gameplay-runtime release. The previous releases established perception, pathfinding and the production adapter boundary. V3.5 connects those pieces into a tighter **observe → decide → safely act → observe → verify** loop and adds bounded Minecraft action primitives and goal tracking.
+V3.6 expands the tiny V3.5 action set into a much more useful Minecraft control vocabulary and gives the planner a structured action schema.
 
-```text
-Minecraft
-   ↓
-Screen Capture
-   ↓
-Hybrid Minecraft Vision
-   ↓
-Validated World State
-   ↓
-Short-Term Observation Memory
-   ↓
-Goal / Planner
-   ↓
-A* Pathfinding
-   ↓
-Safety Gate
-   ↓
-Bounded Action Controller
-   ↓
-Minecraft
-   ↓
-New Observation
-   ↓
-Action Verification
-   ↓
-Progress / Recovery
-   ↺
-```
-
-## V3.5 additions
-
-- closed-loop Minecraft runtime
-- bounded movement action controller
-- explicit allowlisted action vocabulary
-- action duration limits
-- post-action verification
-- short-term observation memory
-- monotonic goal progress tracking
-- bounded goal attempts
-- low-confidence action refusal
-- safety-gate integration point
-- regression tests for the new gameplay layer
-
-## Bounded Minecraft actions
-
-`minecraft/v35_action_controller.py`
-
-The controller does **not** accept arbitrary keyboard strings from the AI. It exposes a small Minecraft-specific vocabulary:
+### Action vocabulary
 
 ```text
-forward
-back
-left
-right
-jump
-sprint
-attack
-use
-hotbar_next
-hotbar_prev
+MOVEMENT
+forward, back, left, right
+jump, sprint, sneak
+
+COMBAT / INTERACTION
+attack, use, pick_block
+
+INVENTORY / ITEMS
+inventory, drop_item, swap_hands
+hotbar_1 ... hotbar_9
+hotbar_next, hotbar_prev
+
+UI
+chat, pause
+
+CAMERA
+look(dx, dy)
+look_left, look_right, look_up, look_down
+
+CONTROL
 stop
 ```
 
-Movement actions are deliberately short and capped by `max_duration_ms`.
+This is intentionally much richer than the previous 11-action vocabulary.
 
-This is important for a screen-driven agent. Instead of:
+## Structured actions
 
-```text
-"hold W for 20 seconds"
-```
-
-the runtime can do:
-
-```text
-observe
-→ forward 80 ms
-→ observe
-→ verify
-→ forward 80 ms
-→ observe
-```
-
-The exact duration can be tuned by the planner, but the controller remains bounded.
-
-## Closed-loop runtime
-
-`minecraft/v35_runtime_loop.py`
-
-The runtime implements:
-
-```text
-OBSERVE
-   ↓
-confidence check
-   ↓
-safety gate
-   ↓
-ONE SHORT ACTION
-   ↓
-OBSERVE AGAIN
-   ↓
-VERIFY
-   ↓
-CONTINUE / REPLAN / STOP
-```
-
-If perception confidence is too low, the runtime stops rather than blindly acting.
-
-If the safety gate rejects an action, it is not executed.
-
-The runtime never turns an AI proposal directly into unrestricted OS input.
-
-## Action verification
-
-`minecraft/v35_action_verifier.py`
-
-After every bounded action, the new observation is compared with the previous state.
-
-The verifier records whether:
-
-- the player screen position changed
-- the observed state changed
-- the action has observable evidence of success
-
-A movement command that produces no expected change can therefore feed the existing stuck/recovery logic instead of being silently counted as progress.
-
-## Observation memory
-
-`minecraft/v35_observation_memory.py`
-
-A bounded deque stores recent observations.
-
-This gives the planner temporal context without creating unbounded memory growth:
-
-```text
-frame t-3
-frame t-2
-frame t-1
-frame t
-```
-
-Recent observations can be compared for state changes and progress.
-
-## Goal management
-
-`minecraft/v35_goal_manager.py`
-
-Goals now have:
-
-- name
-- target data
-- progress
-- status
-- attempt count
-
-Progress is monotonic within a goal, so a noisy observation cannot accidentally turn `80%` progress into `20%`.
+`minecraft/v36_action_schema.py` converts planner/VLM JSON into a validated `ActionCommand`.
 
 Example:
 
-```text
-Goal: collect oak logs
-
-0.00 ────────┐
-0.35         │
-0.60         │
-0.80         │
-1.00 ────────┘ COMPLETE
+```json
+{
+  "action": "forward",
+  "duration_ms": 120
+}
 ```
 
-The goal manager is deliberately generic. Minecraft-specific task decomposition can sit above it.
+Camera action:
 
-## V2.9 Vision → V3.5 Runtime
-
-The previous vision stack now has a direct place in the runtime:
-
-```text
-MSS
- ↓
-V2.9 Hybrid Vision
- ├─ OpenCV geometry
- ├─ HUD
- ├─ crosshair
- ├─ inventory evidence
- ├─ block candidates
- ├─ entity candidates
- └─ optional NIM VLM semantics
- ↓
-Validated WorldState
- ↓
-V3.5 Runtime
+```json
+{
+  "action": "look",
+  "dx": 90,
+  "dy": -20
+}
 ```
 
-The runtime still follows the rule:
+Unknown actions are rejected before they reach the desktop adapter.
 
-> **The model proposes. The runtime decides.**
+## Bounded control
 
-## V2.6 Pathfinding → V3.5 Actions
+All actions remain bounded.
 
-Pathfinding does not directly press keys.
+- movement duration is clamped
+- camera movement is clamped
+- keyboard actions use press/release cleanup
+- attack/use release the mouse button in `finally`
+- `stop()` releases movement keys
+- the existing Force ESC / watchdog / safety layers remain above the adapter
+
+The model still cannot emit arbitrary OS key names.
+
+## Real control pipeline
 
 ```text
-A* path
-   ↓
-next node
-   ↓
-planner
-   ↓
-ActionCommand
-   ↓
-safety gate
-   ↓
+                  SCREEN
+                    ↓
+              Minecraft Vision
+                    ↓
+              World State
+                    ↓
+           Memory / Progress
+                    ↓
+        Goal + Planner + A*
+                    ↓
+            ActionCommand
+                    ↓
+          Schema Validation
+                    ↓
+          Safety Supervisor
+                    ↓
+        Bounded ActionController
+                    ↓
+       Keyboard / Mouse Adapter
+                    ↓
+                 MINECRAFT
+                    ↓
+                 OBSERVE
+                    ↺
+```
+
+## Production mouse wheel
+
+The production input contract now includes `scroll(clicks)`, and the PyAutoGUI backend implements it. Hotbar scrolling therefore uses the real mouse wheel path instead of pretending a wheel event is a mouse button.
+
+## Why this matters
+
+A Minecraft agent needs more than WASD.
+
+For example, a simple task such as:
+
+> Find a tree, approach it, look at a log, break it, collect the item, open inventory, craft planks, and continue.
+
+requires combinations of:
+
+```text
+look
+forward
+jump
+attack
+use
+hotbar selection
+inventory
+camera correction
+stop
+```
+
+V3.6 provides the action vocabulary needed to represent those behaviors. Higher-level gameplay policies decide **when** to use them.
+
+## Safety boundary
+
+```text
+AI / VLM proposal
+      ↓
+Action schema
+      ↓
+confidence + freshness
+      ↓
+V30 Gate
+      ↓
+V31 Validator
+      ↓
+V50 Supervisor
+      ↓
+V22 pacing
+      ↓
+Force ESC / watchdog
+      ↓
 ActionController
-   ↓
-short input
-   ↓
-verification
+      ↓
+Minecraft
 ```
 
-This separation means pathfinding can be improved independently from OS input.
+The action vocabulary does not bypass these layers.
 
-## Safety architecture
+## Version history
 
 ```text
-                 AI / VLM
-                    ↓
-               candidate action
-                    ↓
-             typed ActionCommand
-                    ↓
-             confidence / freshness
-                    ↓
-                V30 Gate
-                    ↓
-               V31 Validator
-                    ↓
-              V50 Supervisor
-                    ↓
-               V22 Pacing
-                    ↓
-              Watchdog / ESC
-                    ↓
-            ActionController
-                    ↓
-                 Minecraft
+V2.0 = V50 architecture baseline
+V2.1 = observation + feedback reliability
+V2.2 = debugability + progress measurement + pacing
+V2.5 = gameplay reliability + recovery foundations
+V2.6 = bounded A* pathfinding
+V2.7 = runtime boundary
+V2.8 = production screen/input/world-state adapters
+V2.9 = hybrid Minecraft vision + NIM
+V3.5 = closed-loop playable runtime
+V3.6 = full typed Minecraft action layer
 ```
 
-V3.5 does **not** bypass the safety architecture.
+## Tests
 
-The controller only accepts the allowlisted actions and clamps durations.
+The V3.5 tests remain the regression suite for goal tracking, action clamping and verification. The V3.6 schema is intentionally small and deterministic so planner output can be validated before execution.
 
-## Real Minecraft workflow
-
-### 1. Install
+## Installation
 
 ```bash
 git clone https://github.com/Qynl/AgentQynl.git
@@ -278,9 +194,7 @@ Linux/macOS:
 source .venv/bin/activate
 ```
 
-Install the required dependencies for the repository and vision layer.
-
-### 2. Desktop app
+For the desktop application:
 
 ```bash
 cd apps/desktop
@@ -288,93 +202,11 @@ npm install
 npm run dev
 ```
 
-The desktop app is the intended place for runtime configuration, status, safety controls and diagnostics.
+## Limitations
 
-### 3. Start safely
+The action vocabulary is now broad enough to represent normal Minecraft interaction, but an action vocabulary alone does not create gameplay intelligence. Reliable Minecraft play still depends on accurate vision, state estimation, task planning, physics-aware movement, inventory/crafting policies and repeated verification.
 
-Use a dedicated Minecraft test world first.
-
-```text
-DRY RUN
-  ↓
-Screen capture
-  ↓
-Vision
-  ↓
-World state
-  ↓
-Planning
-  ↓
-Action proposal
-  ↓
-NO INPUT
-```
-
-Then test bounded real input with Force ESC immediately available.
-
-### 4. Increase autonomy
-
-```text
-one action
- ↓
-verify
- ↓
-short sequence
- ↓
-verify
- ↓
-short mission
- ↓
-verify
- ↓
-longer mission
-```
-
-Do not start by giving an untested agent unrestricted control of a real world/server.
-
-## What V3.5 does NOT pretend
-
-V3.5 is a major runtime step, but it does not magically solve every Minecraft task.
-
-A screen-driven agent still has hard problems to solve:
-
-- exact block identity under visual ambiguity
-- hidden blocks behind the camera
-- precise 3D coordinates from 2D images
-- jumping/falling physics
-- inventory manipulation
-- crafting UI interaction
-- combat timing
-- resource gathering policies
-- long-horizon planning
-- server latency
-- shaders/resource packs/UI scaling
-
-When a fact cannot be established from the available observation, the correct behavior is to remain uncertain and observe again.
-
-## Tests
-
-`evals/test_v35.py` covers:
-
-- monotonic goal progress
-- action-duration clamping
-- post-action state verification
-
-The earlier V2.8/V2.9 vision and adapter test suites remain part of the regression surface.
-
-## Version history
-
-```text
-V2.0 = V50 architecture baseline
-V2.1 = observation + feedback reliability
-V2.2 = debugability + progress measurement + pacing
-V2.5 = gameplay reliability + recovery foundations
-V2.6 = bounded A* pathfinding
-V2.7 = runtime boundary
-V2.8 = production screen/input/world-state adapters
-V2.9 = hybrid Minecraft vision + NIM
-V3.5 = closed-loop playable runtime
-```
+When perception is uncertain, the agent should observe again instead of inventing state.
 
 ## License
 
