@@ -1,41 +1,137 @@
-# Qynl Agent V3.7
+# Qynl Agent V3.8
 
-Qynl is a Minecraft-only autonomous AI agent focused on screen-based perception, world-state reasoning, pathfinding, bounded actions, task decomposition, verification and runtime safety.
+Qynl is a Minecraft-only autonomous AI agent focused on screen perception, world-state reasoning, navigation, inventory interaction, bounded actions, task decomposition, verification and runtime safety.
 
-## V3.7: Gameplay Reliability Update
+## V3.8: Inventory + Gameplay Interaction
 
-V3.7 targets the biggest remaining weaknesses from V3.5/V3.6: weak long-horizon task decomposition, fragile navigation, acting on stale perception, and inventory reasoning without evidence.
+V3.8 expands the gameplay layer substantially. Qynl can now reason about verified inventory evidence and interact with inventory slots, including moving a verified item toward the hotbar. Hotbar selection uses Minecraft's normal **1-9 number keys**, not mouse-wheel simulation.
 
 ### New
 
-- perception freshness/confidence policy
-- target selection from observed blocks/entities
-- camera-aware navigation decisions
-- bounded recovery ladder
-- common Minecraft goal decomposition
-- evidence-based inventory checks
-- gameplay regression tests
+- evidence-based inventory state
+- inventory item lookup by confidence
+- inventory slot coordinate validation
+- click/drag-ready slot interaction boundary
+- shift-click quick-move toward hotbar
+- explicit hotbar slots 1-9
+- number-key hotbar selection
+- removed wheel-based hotbar actions
+- safer inventory interaction when vision confidence is low
 
-## Closed loop
+## Hotbar
+
+The action language now treats Minecraft's hotbar as nine explicit slots:
+
+```text
+hotbar_1
+hotbar_2
+hotbar_3
+hotbar_4
+hotbar_5
+hotbar_6
+hotbar_7
+hotbar_8
+hotbar_9
+```
+
+Internally these map to the real keyboard keys `1` through `9`.
+
+The old `hotbar_next` / `hotbar_prev` wheel actions are removed. This avoids pretending that a wheel event is a normal Minecraft hotbar-selection primitive.
+
+## Inventory interaction
+
+`minecraft/v38_inventory_state.py` converts vision output into verified item evidence.
+
+An item is usable for an inventory plan only when the vision layer supplies:
+
+- item identifier
+- count
+- slot index
+- confidence
+- screen coordinates when an interaction is required
+
+Example:
+
+```text
+Vision
+ ↓
+slot 12
+item = oak_log
+count = 3
+confidence = 0.91
+x/y = verified
+ ↓
+InventoryPlanner
+ ↓
+quick-move / click plan
+ ↓
+InventoryController
+ ↓
+Minecraft
+ ↓
+re-observe inventory
+ ↓
+verify result
+```
+
+### Moving an item toward the hotbar
+
+`minecraft/v38_inventory_controller.py` supports:
+
+```text
+select_hotbar(1..9)
+click_slot(...)
+quick_move_to_hotbar(...)
+```
+
+`quick_move_to_hotbar` uses Minecraft's normal Shift-click behavior. It requires a sufficiently confident, coordinate-bearing inventory observation first.
+
+The controller does **not** guess where a slot is on screen.
+
+## Why this matters
+
+Inventory is one of the biggest differences between a demo agent and a useful Minecraft agent.
+
+The agent must be able to reason about:
+
+```text
+What do I have?
+      ↓
+What do I need?
+      ↓
+Where is it?
+      ↓
+Which hotbar slot should hold it?
+      ↓
+Move/select it
+      ↓
+Verify the new inventory state
+```
+
+V3.8 creates the interaction boundary for this loop while keeping perception evidence separate from input execution.
+
+## Full runtime
 
 ```text
 SCREEN
   ↓
-VISION
+HYBRID VISION
   ↓
 VALIDATED WORLD STATE
   ↓
-FRESHNESS + CONFIDENCE GATE
+FRESHNESS + CONFIDENCE
   ↓
 GOAL DECOMPOSITION
   ↓
-TARGET SELECTION
+TARGET / INVENTORY REASONING
   ↓
-PATH / CAMERA NAVIGATION
+A* + CAMERA NAVIGATION
   ↓
 SAFETY
   ↓
-SHORT ACTION
+STRUCTURED ACTION
+  ↓
+MINECRAFT
   ↓
 OBSERVE
   ↓
@@ -45,180 +141,85 @@ PROGRESS / RECOVER / REPLAN
   ↺
 ```
 
-## Perception reliability
-
-`minecraft/v37_gameplay.py` adds a `PerceptionPolicy` that rejects observations that are either too old or below the configured confidence threshold.
-
-This matters because a screen agent must never treat an old screenshot as if it represented the current Minecraft world.
-
-Default policy:
+## V3.8 action examples
 
 ```text
-minimum confidence: 0.55
-maximum observation age: 1.0 second
+hotbar_1
 ```
 
-These values are configuration defaults, not claims of universal accuracy.
-
-## Target selection
-
-The `TargetSelector` chooses a visible target only when the target has compatible observed metadata and a usable numeric distance.
-
-It does not invent a target's distance or position.
-
-Example:
+Selects slot 1.
 
 ```text
-Goal: collect oak logs
-       ↓
-visible blocks
-       ↓
-oak_log candidates
-       ↓
-nearest valid candidate
-       ↓
-navigation
+hotbar_7
 ```
 
-## Camera-aware navigation
-
-`minecraft/v37_navigation.py` provides a small navigation controller that first attempts to align the camera toward a visible target before moving forward.
+Selects slot 7.
 
 ```text
-target left  → look_left
- target right → look_right
- target above → look_up
- target below → look_down
- aligned      → forward
+inventory
 ```
 
-Actions remain bounded and are still passed through the existing safety/action layer.
-
-This is not a replacement for full 3D pathfinding. It is a practical visual-navigation layer between 2D perception and the existing A* system.
-
-## Recovery
-
-`RecoveryPlanner` uses a bounded ladder:
+Opens/closes the inventory using Minecraft's normal `E` key binding.
 
 ```text
-stop
- ↓
-look_left
- ↓
-look_right
- ↓
-back
- ↓
-jump
- ↓
-reobserve
+look(dx=120, dy=-15)
 ```
 
-The recovery ladder is deterministic and bounded. Repeated failure is therefore surfaced to the higher-level planner instead of looping forever.
+Moves the camera through the mouse adapter, with bounded deltas.
 
-## Task decomposition
+Inventory actions are deliberately represented separately from generic movement actions so the planner can reason about UI state.
 
-`minecraft/v37_tasks.py` adds reusable decomposition for common early-game objectives:
+## Existing gameplay systems
 
-- wood
-- crafting table
-- stone tools
-- food
-
-For example:
-
-```text
-crafting table
- ↓
-ensure oak logs
- ↓
-craft planks
- ↓
-craft crafting table
- ↓
-verify inventory
-```
-
-Unknown goals fall back to a generic observe → identify → plan → act → verify cycle instead of pretending the task is understood.
-
-## Inventory reasoning
-
-`minecraft/v37_inventory.py` only counts an item when the vision state contains a slot with:
-
-- an item identifier
-- a count
-- sufficient confidence
-
-No invisible inventory slots are fabricated.
-
-## Existing architecture
-
-V3.7 builds on:
+V3.8 builds on:
 
 ```text
 V2.6  A* pathfinding
-V2.8  production screen/input/world-state adapters
+V2.8  production adapters
 V2.9  hybrid Minecraft vision + optional NIM VLM
 V3.5  closed-loop runtime
 V3.6  structured Minecraft action language
 V3.7  gameplay reliability + task decomposition
+V3.8  inventory interaction + explicit hotbar control
 ```
 
 ## Safety
 
-The safety boundary remains mandatory:
+The model still does not get arbitrary OS input access:
 
 ```text
 AI / VLM
  ↓
-structured action
+structured Minecraft command
  ↓
 confidence + freshness
  ↓
 safety supervisor
  ↓
-bounded action controller
+bounded controller
  ↓
 Minecraft
 ```
 
-The V3.7 gameplay layer does not grant arbitrary keyboard/mouse access and does not bypass emergency stop.
+Inventory interactions additionally require confidence-bearing slot coordinates.
 
-## What V3.7 improves
+Emergency stop remains outside the model's control.
 
-### Basic navigation
+## Important limitation
 
-Better because Qynl can select observed targets, align the camera, move in bounded steps and recover when progress stops.
+Screen-only inventory interaction is inherently sensitive to Minecraft GUI scale, window position, resolution, resource packs and UI layout. V3.8 therefore treats coordinates as **vision evidence**, not hard-coded universal positions.
 
-### Long tasks
+A failed inventory transfer must be followed by a new observation and verification rather than assumed successful.
 
-Better because common goals are decomposed into verifiable subtasks instead of being treated as one giant instruction.
+## Tests
 
-### Inventory
-
-Better because inventory claims now require visual evidence.
-
-### Vision mistakes
-
-Safer because stale or low-confidence observations can be rejected before action selection.
-
-### Stuck situations
-
-Better because recovery is explicit and bounded.
-
-## Important limitations
-
-V3.7 still cannot guarantee perfect Minecraft play from screenshots alone. Exact 3D localization, hidden terrain, complex inventories, crafting grids, combat, physics and long-horizon survival remain difficult perception/planning problems.
-
-The architecture intentionally handles uncertainty by observing again, recovering, or escalating rather than fabricating state.
-
-## Test
-
-Run the existing test suite plus:
+Run:
 
 ```bash
 pytest evals/ minecraft/v37_tests.py
 ```
+
+Add V3.8 controller tests before enabling autonomous inventory interaction on a real world.
 
 ## License
 
