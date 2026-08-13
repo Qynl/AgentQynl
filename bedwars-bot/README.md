@@ -1,66 +1,117 @@
-# Qynl BedWars Training Bot
+# Qynl BedWars 1.8.9 Training Agent
 
-A separate 1.8.9-oriented combat/training agent sharing Qynl's local Ollama reasoning stack.
+A dedicated **private-server training agent** for Minecraft 1.8.9. It shares Qynl's local Ollama reasoning layer, but keeps high-frequency movement/combat decisions in a fast local controller.
 
-## Scope
+> **Scope:** private worlds, LAN test servers, bot arenas and training environments. Do not use this project to automate competitive public-server matches or bypass anti-cheat systems.
 
-This module is intended for **private worlds, LAN test servers, bot arenas, and training environments**. It is not designed to automate competitive public-server matches or evade anti-cheat systems.
-
-## Architecture
+## Design
 
 ```text
-Minecraft 1.8.9 / test arena
-        |
-        +-- game state / screenshots
-        |
-        v
-   BedWars Perception
-        |
-        v
-   Combat State Machine
-        |
-   +----+-----+----------------+
-   |          |                |
- Target     Movement        Objective
-   |          |                |
-   +----------+----------------+
-              |
-              v
-      Ollama / local model
-              |
-              v
-       bounded decision
-              |
-              v
-       Action Executor
-              |
-              v
-          Minecraft
+Minecraft 1.8.9
+      │
+      ├── Perception ───────────────┐
+      │   target / health / blocks  │
+      │   bed / void / inventory    │
+      │                             ▼
+      │                     Combat State
+      │                             │
+      │             ┌───────────────┼──────────────┐
+      │             ▼               ▼              ▼
+      │          Target          Movement       Objective
+      │             │               │              │
+      │             └───────────────┼──────────────┘
+      │                             ▼
+      │                    Fast Action Controller
+      │                             │
+      │                    verify → recover
+      │                             │
+      ▼                             ▼
+  Minecraft ◄────────────────── Action Executor
+
+                         ▲
+                         │
+                  Strategy / Planning
+                         │
+                    Ollama (local)
 ```
 
-The fast combat loop is deterministic. The LLM is used for higher-level decisions, not per-frame mouse jitter.
+The local controller runs the time-sensitive loop. Ollama is deliberately **not** called for every click or frame. This keeps the agent responsive and makes temporary model latency recoverable.
 
-## Combat goals
+## Core systems
 
-- target selection
-- distance/angle control
-- strafing
-- sprint reset timing
+### Combat
+
+- target selection with confidence
+- distance and angle state
+- strafing state machine
+- sprint-state management
+- attack timing
 - hit confirmation
-- combo training
-- disengage when outnumbered
-- void/death risk awareness
-- bed/objective awareness
-- recovery after missed actions
+- combo tracking
+- knockback/recovery state
+- disengage logic
+- void and fall-risk checks
+- configurable reaction/decision rates
+
+### BedWars awareness
+
+- bed/objective state
+- resource awareness
+- upgrade/shop planning hooks
+- teammate/opponent awareness
+- defend / attack / retreat strategy states
+- death/reset recovery
+
+### Training telemetry
+
+Record local, non-sensitive metrics such as:
+
+- hits and misses
+- damage dealt/received
+- longest combo
+- fight duration
+- deaths
+- disengages
+- objective results
+- movement/reaction statistics
+
+Use these for replay review and local training evaluation rather than for bypassing server protections.
 
 ## Ollama
 
-Default endpoint:
+Default local endpoint:
 
 `http://127.0.0.1:11434`
 
-The model can be configured without changing the combat engine. Keep inference off the 1.8.9 render/input tick.
+Recommended architecture:
 
-## Safety
+```text
+Ollama → strategic goal
+           ↓
+Fast local controller → movement/combat
+           ↓
+Minecraft state → verification
+           ↓
+Recovery / next goal
+```
 
-Do not use this module to automate public competitive matches or bypass server anti-cheat. Use it for local testing and training.
+Inference must remain off the latency-sensitive 1.8.9 render/input loop. If Ollama is unavailable, the controller should continue in a safe fallback state or pause, never block the client thread.
+
+## Emergency controls
+
+The training client should provide an immediate manual takeover and emergency stop. A human-controlled state always has priority over the agent.
+
+## Development priorities
+
+1. deterministic local game-state adapter
+2. target/movement controller
+3. combat state machine
+4. objective planner
+5. Ollama strategy adapter
+6. telemetry/replay
+7. private-server training scenarios
+8. regression tests for movement/combat state transitions
+
+## Important
+
+This project is intentionally scoped to controlled training environments. It does not contain anti-cheat bypasses, stealth behavior, or public-server automation features.
