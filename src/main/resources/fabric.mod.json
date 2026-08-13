@@ -3,7 +3,7 @@
   "id": "agentqynl",
   "version": "${version}",
   "name": "AgentQynl",
-  "description": "Qynl Minecraft AI co-op companion bridge.",
+  "description": "Qynl autonomous Minecraft co-op companion.",
   "authors": ["Qynl"],
   "environment": "*",
   "entrypoints": { "main": ["qynl.agent.AgentQynlMod"] },
